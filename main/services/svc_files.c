@@ -8,7 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include "bsp/esp-bsp.h"   /* BSP_SD_MOUNT_POINT */
+/* SD_MOUNT_POINT removed — use SD_MOUNT_POINT from app_config.h */
 
 #include <sys/stat.h>
 #include <dirent.h>
@@ -63,9 +63,9 @@ esp_err_t svc_files_refresh_list(watch_file_list_t *out)
     }
     out->sd_ok = true;
 
-    DIR *dir = opendir(BSP_SD_MOUNT_POINT);
+    DIR *dir = opendir(SD_MOUNT_POINT);
     if (!dir) {
-        ESP_LOGW(TAG, "opendir failed on %s", BSP_SD_MOUNT_POINT);
+        ESP_LOGW(TAG, "opendir failed on %s", SD_MOUNT_POINT);
         return ESP_FAIL;
     }
 
@@ -81,7 +81,7 @@ esp_err_t svc_files_refresh_list(watch_file_list_t *out)
          * ~25 chars and the 128-byte path buffer is always sufficient. */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
-        snprintf(fe->path, sizeof(fe->path), "%s/%s", BSP_SD_MOUNT_POINT, de->d_name);
+        snprintf(fe->path, sizeof(fe->path), "%s/%s", SD_MOUNT_POINT, de->d_name);
 #pragma GCC diagnostic pop
         fe->kind = classify_file(de->d_name);
 

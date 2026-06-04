@@ -16,7 +16,7 @@
 #include "esp_err.h"
 #include "esp_timer.h"
 #include "esp_rom_sys.h"
-#include "bsp/esp-bsp.h"
+/* SD_MOUNT_POINT removed — SD_MOUNT_POINT from app_config.h used instead */
 
 static const char *TAG = "Rec";
 
@@ -51,13 +51,13 @@ static esp_err_t rec_open_file(void)
 
     if (s_rec_label[0])
         snprintf(s_rec_filename, sizeof(s_rec_filename),
-                 BSP_SD_MOUNT_POINT "/%04d%02d%02d_%02d%02d%02d_%03d_%s.csv",
+                 SD_MOUNT_POINT "/%04d%02d%02d_%02d%02d%02d_%03d_%s.csv",
                  tm_now.tm_year+1900, tm_now.tm_mon+1, tm_now.tm_mday,
                  tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec, ms,
                  s_rec_label);
     else
         snprintf(s_rec_filename, sizeof(s_rec_filename),
-                 BSP_SD_MOUNT_POINT "/%04d%02d%02d_%02d%02d%02d_%03d.csv",
+                 SD_MOUNT_POINT "/%04d%02d%02d_%02d%02d%02d_%03d.csv",
                  tm_now.tm_year+1900, tm_now.tm_mon+1, tm_now.tm_mday,
                  tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec, ms);
 

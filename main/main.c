@@ -55,9 +55,9 @@
 #include "esp_adc/adc_cali_scheme.h"
 
 #include "lvgl.h"
-/* TODO Phase 2: BSP headers removed — bsp_display_start/backlight/lock/unlock
- * must be replaced with hal_display_init() + hal_backlight_set_percent() calls
- * in app_main(), screen_sleep(), and screen_wake() below. */
+
+#include "hal_backlight.h"
+#include "hal_touch.h"
 
 /* SD card / filesystem */
 #include "esp_vfs_fat.h"
@@ -484,19 +484,14 @@ static void reset_activity(void)
 static void screen_sleep(void)
 {
     s_screen_on = false;
-    bsp_display_backlight_off();
-
+    hal_backlight_off();
 }
 
 static void screen_wake(void)
 {
     s_screen_on = true;
-    bsp_display_backlight_on();
-#ifdef BSP_DISPLAY_BRIGHTNESS_SET_SUPPORTED
-    bsp_display_brightness_set(s_brightness);
-#endif
+    hal_backlight_set_percent(s_brightness);
     reset_activity();
-
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2113,7 +2108,7 @@ static void rec_ui_timer_cb(lv_timer_t *timer)
         if (batt >= 0 && batt <= REC_BATT_STOP_PCT) {
             ESP_LOGW(TAG, "Battery low (%d%%), stopping", batt);
             svc_rec_stop();
-            if (bsp_display_lock(DISPLAY_LOCK_SLICE_MS)) {
+            if (hal_display_lock_ms(DISPLAY_LOCK_SLICE_MS)) {
                 if (s_lbl_rec_btn)
                     lv_label_set_text(s_lbl_rec_btn,
                                       LV_SYMBOL_PLAY "  REC");
@@ -2125,7 +2120,7 @@ static void rec_ui_timer_cb(lv_timer_t *timer)
                 if (s_lbl_rec_status)
                     lv_label_set_text(s_lbl_rec_status,
                                       "Stopped: low battery");
-                bsp_display_unlock();
+                hal_display_unlock();
             }
         }
         if (s_lbl_rec_status) {
@@ -2376,9 +2371,7 @@ static void brightness_event_cb(lv_event_t *e)
     snprintf(buf, sizeof(buf), "%d%%", s_brightness);
     lv_label_set_text(s_lbl_bright_val, buf);
 
-#ifdef BSP_DISPLAY_BRIGHTNESS_SET_SUPPORTED
-    bsp_display_brightness_set(s_brightness);
-#endif
+    hal_backlight_set_percent(s_brightness);
 }
 
 static void timeout_dd_cb(lv_event_t *e)
@@ -2750,7 +2743,7 @@ static void ui_create_settings_screen(void)
 
 /*
  * Helper to start or stop the BP sampler task.
- * Called under bsp_display_lock so s_bp_sampler_task is only touched from the
+ * Called under the LVGL mutex so s_bp_sampler_task is only touched from the
  * LVGL task; the task itself clears the handle when it exits.
  */
 static void bp_start_recording(void)
@@ -3529,15 +3522,14 @@ void app_main(void)
     ecg_adc_init();
     ppg_sim_init();
 
-    bsp_display_start();
-    bsp_display_backlight_on();
-#ifdef BSP_DISPLAY_BRIGHTNESS_SET_SUPPORTED
-    bsp_display_brightness_set(s_brightness);
-#endif
+    hal_backlight_init();
+    hal_display_init();
+    hal_touch_init();
+    hal_backlight_set_percent(s_brightness);
 
     reset_activity();
 
-    if (bsp_display_lock(0)) {
+    if (hal_display_lock_ms(0)) {
         ui_create_wifi_screen();
         ui_create_password_screen();
         ui_create_connecting_screen();
@@ -3547,12 +3539,9 @@ void app_main(void)
         update_home_time_labels();
         health_update_topbar();
 
-#if LVGL_VERSION_MAJOR >= 9
         lv_screen_load(s_scr_wifi);
-#else
-        lv_scr_load(s_scr_wifi);
-#endif
-        bsp_display_unlock();
+
+        hal_display_unlock();
     }
 
     wifi_driver_init();

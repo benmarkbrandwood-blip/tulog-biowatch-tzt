@@ -2,9 +2,11 @@ idf_component_register(
     SRCS
         "main.c"
         "ui/ui_common.c"
+        "hal/hal_backlight.c"
         "hal/hal_battery.c"
         "hal/hal_display.c"
         "hal/hal_storage.c"
+        "hal/hal_touch.c"
         "signal/sig_pipeline.c"
         "signal/sig_ppg.c"
         "services/svc_nvs.c"
@@ -26,6 +28,7 @@ idf_component_register(
         esp_timer
         lwip
         esp_driver_gpio
+        esp_driver_ledc
         driver
         esp_adc
         fatfs

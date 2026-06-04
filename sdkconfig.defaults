@@ -35,7 +35,6 @@ CONFIG_SPI_MASTER_IN_IRAM=y
 # ADC2 is unavailable during WiFi on classic ESP32 — no code should use ADC2.
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
 CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
-CONFIG_ESP_WIFI_TX_BUFFER_TYPE_DYNAMIC=y
 
 # ── LVGL: custom allocator; no fixed PSRAM pool ───────────────────────────────
 # The source used CONFIG_LV_MEM_SIZE_KILOBYTES=128 from PSRAM.
