@@ -1,0 +1,80 @@
+# ── Target ────────────────────────────────────────────────────────────────────
+CONFIG_IDF_TARGET="esp32"
+
+# ── Flash ─────────────────────────────────────────────────────────────────────
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_40M=y
+
+# ── No PSRAM (ESP32-WROOM-32 has none) ────────────────────────────────────────
+# CONFIG_SPIRAM is not set
+# CONFIG_SPIRAM_MODE_OCT is not set
+
+# ── Partition table ───────────────────────────────────────────────────────────
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ── Console: UART0 via CH340 (no USB-JTAG on classic ESP32) ──────────────────
+# Classic ESP32 uses CH340 USB-UART bridge; no hardware USB-JTAG peripheral.
+# Connect at 115200 baud via the USB-C port (routes through CH340, not USB CDC).
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+# CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG is not set
+# CONFIG_ESP_CONSOLE_USB_CDC is not set
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# ── FreeRTOS ──────────────────────────────────────────────────────────────────
+CONFIG_FREERTOS_HZ=1000
+
+# ── ADC: keep ISR handler in IRAM for low-latency battery reads ───────────────
+CONFIG_ADC_ONESHOT_CTRL_FUNC_IN_IRAM=y
+
+# ── SPI: keep master in IRAM to reduce display flush latency ─────────────────
+CONFIG_SPI_MASTER_IN_IRAM=y
+
+# ── WiFi ──────────────────────────────────────────────────────────────────────
+# ADC2 is unavailable during WiFi on classic ESP32 — no code should use ADC2.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_ESP_WIFI_TX_BUFFER_TYPE_DYNAMIC=y
+
+# ── LVGL: custom allocator; no fixed PSRAM pool ───────────────────────────────
+# The source used CONFIG_LV_MEM_SIZE_KILOBYTES=128 from PSRAM.
+# On the target we use CONFIG_LV_MEM_CUSTOM=y and allocate from IRAM/DRAM at
+# runtime in hal_display.c — PSRAM is not available.
+CONFIG_LV_COLOR_DEPTH_16=y
+# ILI9341 over SPI uses little-endian RGB565 — no byte swap needed.
+# The source had CONFIG_LV_COLOR_16_SWAP=y for the CO5300 QSPI AMOLED; remove it.
+# CONFIG_LV_COLOR_16_SWAP is not set
+CONFIG_LV_MEM_CUSTOM=y
+CONFIG_LV_USE_LOG=y
+CONFIG_LV_USE_KEYBOARD=y
+CONFIG_LV_USE_TEXTAREA=y
+CONFIG_LV_USE_LIST=y
+CONFIG_LV_USE_LABEL=y
+CONFIG_LV_USE_BTN=y
+CONFIG_LV_USE_BTNMATRIX=y
+CONFIG_LV_USE_SPINNER=y
+CONFIG_LV_USE_MSGBOX=y
+CONFIG_LV_USE_DROPDOWN=y
+CONFIG_LV_USE_BAR=y
+CONFIG_LV_USE_SLIDER=y
+
+# ── Montserrat fonts ──────────────────────────────────────────────────────────
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_18=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_MONTSERRAT_48=y
+
+# ── SD / FAT ─────────────────────────────────────────────────────────────────
+# SD card now uses SPI mode via sdspi_host (was SDMMC 1-bit on S3).
+# No CONFIG_SOC_SDMMC_HOST_SUPPORTED needed — that was the native S3 SDMMC.
+CONFIG_FATFS_CODEPAGE_850=y
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+CONFIG_FATFS_API_ENCODING_UTF_8=y
+CONFIG_FATFS_LONG_FILENAMES=y
+CONFIG_VFS_SUPPORT_TERMIOS=y
+
+# ── LWIP / SNTP ──────────────────────────────────────────────────────────────
+CONFIG_LWIP_SNTP_MAX_SERVERS=1
+CONFIG_LWIP_SNTP_UPDATE_DELAY=15000

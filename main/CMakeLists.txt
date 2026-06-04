@@ -1,0 +1,39 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "ui/ui_common.c"
+        "hal/hal_battery.c"
+        "hal/hal_display.c"
+        "hal/hal_storage.c"
+        "signal/sig_pipeline.c"
+        "signal/sig_ppg.c"
+        "services/svc_nvs.c"
+        "services/svc_time.c"
+        "services/svc_record.c"
+        "services/svc_bp_record.c"
+        "services/svc_files.c"
+    INCLUDE_DIRS
+        "."
+        "ui"
+        "hal"
+        "signal"
+        "services"
+    REQUIRES
+        nvs_flash
+        esp_wifi
+        esp_event
+        esp_netif
+        esp_timer
+        lwip
+        esp_driver_gpio
+        driver
+        esp_adc
+        fatfs
+        esp_driver_sdspi
+        esp_driver_spi
+        esp_lcd
+        esp_driver_i2c
+        esp_http_client
+        # Removed: waveshare__esp32_s3_touch_amoled_2_06 (BSP — replaced by direct drivers)
+        # Removed: sdmmc (native SDMMC host — replaced by sdspi_host in hal_storage.c Phase 2)
+)

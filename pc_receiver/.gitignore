@@ -1,0 +1,16 @@
+# Received files — tracked by file_index.jsonl, not git
+inbox/record/*.csv
+inbox/bp/*.csv
+inbox/unknown/*
+
+# Logs
+logs/upload_log.txt
+logs/file_index.jsonl
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/

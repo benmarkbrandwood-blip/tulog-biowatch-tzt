@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(idf.py build *)",
+      "Read(//home/benbrandwood/**)",
+      "Read(//home/benbrandwood/.espressif/**)",
+      "Bash(/home/benbrandwood/.espressif/v6.0.1/esp-idf/tools/idf.py build *)",
+      "Read(//media/benbrandwood/3030-6461/**)",
+      "Bash(awk -F',' 'NR==1{print; next} $13!=0{print}')",
+      "Bash(bash -c 'source /home/benbrandwood/esp/esp-idf/export.sh > /tmp/idf_export.log 2>&1 && idf.py build > /tmp/build_out.txt 2>&1; echo \"EXIT: $?\"')",
+      "Bash(cat /tmp/build_out.txt | tail -80)",
+      "Read(//tmp/**)",
+      "Bash(bash -c 'source /home/benbrandwood/esp/esp-idf/export.sh > /tmp/idf.log 2>&1 && idf.py build > /tmp/build.log 2>&1; echo $?')",
+      "Bash(python3 /home/benbrandwood/.espressif/v6.0.1/esp-idf/tools/idf.py build)",
+      "Bash(/home/benbrandwood/.espressif/python_env/idf6.0_py3.10_env/bin/python /home/benbrandwood/.espressif/v6.0.1/esp-idf/tools/idf.py build)",
+      "Bash(IDF_PATH=/home/benbrandwood/.espressif/v6.0.1/esp-idf IDF_PYTHON_ENV_PATH=/home/benbrandwood/.espressif/python_env/idf6.0_py3.10_env ESP_IDF_VERSION=6.0.1 /home/benbrandwood/.espressif/python_env/idf6.0_py3.10_env/bin/python /home/benbrandwood/.espressif/v6.0.1/esp-idf/tools/idf.py build)",
+      "Bash(IDF_PATH=/home/benbrandwood/.espressif/v6.0.1/esp-idf IDF_PYTHON_ENV_PATH=/home/benbrandwood/.espressif/python_env/idf6.0_py3.10_env ESP_IDF_VERSION=6.0.1 /home/benbrandwood/.espressif/python_env/idf6.0_py3.10_env/bin/python3 /home/benbrandwood/.espressif/v6.0.1/esp-idf/tools/idf.py build)",
+      "Bash(IDF_PATH=/home/benbrandwood/.espressif/v6.0.1/esp-idf IDF_PYTHON_ENV_PATH=/home/benbrandwood/.espressif/python_env/idf6.0_py3.10_env ESP_IDF_VERSION=6.0.1 PATH=/home/benbrandwood/.espressif/tools/ninja/1.12.1:__TRACKED_VAR__ /home/benbrandwood/.espressif/python_env/idf6.0_py3.10_env/bin/python3 /home/benbrandwood/.espressif/v6.0.1/esp-idf/tools/idf.py build)",
+      "Bash(# Use xtensa size tool or readelf if available *)",
+      "Read(//home/**)",
+      "Read(//root/**)",
+      "Read(//opt/**)",
+      "Bash(/home/benbrandwood/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp-elf-size /home/benbrandwood/Documents/dev/tulog-biowatch/build/sample_project.elf)",
+      "Bash(ip addr *)"
+    ],
+    "additionalDirectories": [
+      "/home/benbrandwood/Documents/dev/tulog-PC/pc_receiver"
+    ]
+  }
+}

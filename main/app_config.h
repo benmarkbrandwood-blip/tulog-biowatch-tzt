@@ -1,0 +1,238 @@
+#pragma once
+
+#include "driver/gpio.h"
+
+/* -------------------------------------------------------------------------- */
+/* Display — ILI9341 SPI TFT 240×320                                         */
+/* -------------------------------------------------------------------------- */
+
+#define LCD_H_RES               240
+#define LCD_V_RES               320
+
+/* -------------------------------------------------------------------------- */
+/* Pin definitions — TZT ESP32-2432S024C (capacitive touch variant)          */
+/*                                                                            */
+/* WARNING: GPIO21 is touch INT on the capacitive variant, NOT backlight.    */
+/* The resistive variant uses GPIO21 for backlight — do not follow the       */
+/* Getting Started PDF which shows TFT_BL=21 (that is for the resistive SKU).*/
+/* -------------------------------------------------------------------------- */
+
+/* Display SPI (SPI2 / HSPI) */
+#define PIN_LCD_MOSI   GPIO_NUM_13
+#define PIN_LCD_MISO   GPIO_NUM_12
+#define PIN_LCD_SCLK   GPIO_NUM_14   /* was ECG ADC on source board — now display clock */
+#define PIN_LCD_CS     GPIO_NUM_15
+#define PIN_LCD_DC     GPIO_NUM_2
+/* No hardware reset pin on this board */
+
+/* Backlight — LEDC PWM (capacitive variant) */
+#define PIN_LCD_BL     GPIO_NUM_27
+
+/* Touch — CST820 I2C */
+#define PIN_TP_SDA     GPIO_NUM_33
+#define PIN_TP_SCL     GPIO_NUM_32
+#define PIN_TP_RST     GPIO_NUM_25
+#define PIN_TP_INT     GPIO_NUM_21   /* interrupt input — NOT backlight */
+
+/* Battery ADC — ADC1_CH7, safe during WiFi (ADC1 only) */
+#define PIN_BAT_ADC    GPIO_NUM_35
+
+/* SD card SPI (SPI3 / VSPI) — conventional mapping, verify against schematic */
+#define PIN_SD_SCLK    GPIO_NUM_18
+#define PIN_SD_MISO    GPIO_NUM_19
+#define PIN_SD_MOSI    GPIO_NUM_23
+#define PIN_SD_CS      GPIO_NUM_5
+
+/* SD card VFS mount point */
+#define SD_MOUNT_POINT "/sdcard"
+
+/* -------------------------------------------------------------------------- */
+/* WiFi / network                                                             */
+/* -------------------------------------------------------------------------- */
+
+#define MAX_SCAN_RESULTS        20
+#define WIFI_CONNECT_TIMEOUT_S  15
+#define SNTP_SERVER             "pool.ntp.org"
+#define POSIX_TZ                "AEST-10AEDT,M10.1.0,M4.1.0/3"
+
+/* -------------------------------------------------------------------------- */
+/* Boot button                                                                */
+/* -------------------------------------------------------------------------- */
+
+#define BOOT_SHORT_PRESS_MAX_MS 500
+
+/* -------------------------------------------------------------------------- */
+/* Display / power management                                                 */
+/* -------------------------------------------------------------------------- */
+
+#define DEFAULT_BRIGHTNESS          80
+#define DEFAULT_TIMEOUT_S           30
+
+#define DISPLAY_LOCK_SLICE_MS       50
+#define DISPLAY_LOCK_UI_TIMEOUT_MS  3000
+#define DISPLAY_LOCK_SHORT_MS       1000
+
+/* -------------------------------------------------------------------------- */
+/* NVS key names                                                              */
+/* -------------------------------------------------------------------------- */
+
+#define WIFI_CRED_NAMESPACE     "wifi_creds"
+#define WIFI_LAST_NAMESPACE     "wifi_last"
+#define WIFI_LAST_SSID_KEY      "last_ssid"
+
+#define NVS_TIME_NAMESPACE      "time_data"
+#define NVS_TIME_KEY_LAST_SYNC  "last_sync"
+
+/* -------------------------------------------------------------------------- */
+/* Battery voltage thresholds                                                 */
+/* -------------------------------------------------------------------------- */
+
+#define BATTERY_VOLTAGE_EMPTY    3.30f
+#define BATTERY_VOLTAGE_FULL     4.20f
+
+/* -------------------------------------------------------------------------- */
+/* ECG sampling                                                               */
+/* -------------------------------------------------------------------------- */
+
+#define ECG_SAMPLE_HZ            100
+#define ECG_WINDOW_SECONDS       4
+#define ECG_WINDOW_SAMPLES       (ECG_SAMPLE_HZ * ECG_WINDOW_SECONDS)
+#define ECG_SAMPLE_PERIOD_MS     (1000 / ECG_SAMPLE_HZ)
+#define ECG_UI_REFRESH_MS        50
+#define ECG_PLOT_W               216   /* scaled from 370/410 * 240 */
+#define ECG_PLOT_H               157   /* scaled from 250/502 * 320 */
+#define ECG_PLOT_POINTS          ECG_WINDOW_SAMPLES
+
+/* Chart point count actually rendered. LVGL 9.5 chart hangs at 400 points
+ * on this build; 200 is a safe ceiling. rec_update_plot() stride-subsamples
+ * the 400-sample raw window down to this count. */
+#define REC_CHART_POINTS         200
+
+#define ECG_CORE_SAMPLER         0
+#define UI_AUX_CORE              1
+
+/* -------------------------------------------------------------------------- */
+/* ECG detection                                                              */
+/* -------------------------------------------------------------------------- */
+
+#define ECG_MIN_BPM              35
+#define ECG_MAX_BPM              220
+#define ECG_REFACTORY_MS         250
+#define ECG_THRESHOLD_MARGIN     140
+
+#define ECG_QRS_BP_LOW_HZ        10.0f   /* raised from 5 Hz: attenuates P-wave (~2-8 Hz) */
+#define ECG_QRS_BP_HIGH_HZ       15.0f
+#define ECG_MWI_WINDOW_MS        150
+#define ECG_MWI_SAMPLES          ((ECG_SAMPLE_HZ * ECG_MWI_WINDOW_MS) / 1000)
+#define ECG_MIN_THRESHOLD_FLOOR  25.0f
+
+/* R-peak search window around the MWI detection point.
+ * After MWI fires, the sampler waits FORWARD_SAMPLES ticks so the true R-peak
+ * can accumulate in the ring buffer (handles early detection on P-wave), then
+ * searches BACKWARD and FORWARD samples on the bandpassed signal for the peak. */
+#define ECG_RPEAK_FORWARD_SAMPLES 20   /* wait + forward search: 200 ms */
+#define ECG_RPEAK_BACKWARD_SAMPLES 10  /* backward search: 100 ms */
+
+/* -------------------------------------------------------------------------- */
+/* Recording / SD card                                                        */
+/* -------------------------------------------------------------------------- */
+
+#define REC_CORE_WRITER          1
+#define REC_SAMPLE_HZ            ECG_SAMPLE_HZ
+#define REC_CIRC_BUF_SECONDS     2
+#define REC_CIRC_BUF_ROWS        (REC_SAMPLE_HZ * REC_CIRC_BUF_SECONDS)
+#define REC_WRITE_DELAY_US       500
+#define REC_QUEUE_LEN            (REC_CIRC_BUF_ROWS * 2)
+#define REC_BATT_STOP_PCT        5
+/* Samples between battery percent reads for CSV and recording-stop check (~30 s) */
+#define REC_BATT_UPDATE_SAMPLES  (ECG_SAMPLE_HZ * 30)
+#define SD_MOUNT_RETRY_MAX       5
+#define REC_LABEL_MAX            48
+#define REC_FILENAME_MAX         128
+#define REC_ROW_BUF              160
+#define REC_SIM_AMP              420.0f
+#define REC_SIM_CENTRE           500.0f
+
+/* -------------------------------------------------------------------------- */
+/* B.P. recording                                                             */
+/* -------------------------------------------------------------------------- */
+
+#define BP_SAMPLE_HZ              1000
+#define BP_SAMPLE_PERIOD_US       (1000000 / BP_SAMPLE_HZ)
+/* Core 1: keeps BP sampler off Core 0, away from ecg_sampler_task */
+#define BP_CORE_SAMPLER           1
+#define BP_CORE_WRITER            1
+#define BP_SAMPLER_PRIORITY       6
+#define BP_QUEUE_LEN              512    /* reduced from 2048: no PSRAM on target; allocated from DRAM */
+#define BP_WRITE_DELAY_US         200
+#define BP_IOBUF_SIZE             8192
+#define BP_FLUSH_ROWS             200
+#define BP_ROW_BUF                64
+#define BP_DURATION_30S           30
+#define BP_DURATION_60S           60
+#define BP_DURATION_120S          120
+#define BP_BATT_STOP_PCT          5
+#define BP_ANALYSIS_STACK_BYTES   8192
+
+/* -------------------------------------------------------------------------- */
+/* Respiration rate                                                           */
+/* -------------------------------------------------------------------------- */
+
+#define RESP_RATE_WINDOW_SECONDS  20
+#define RESP_DUP_DELAY_MS         200
+#define RESP_DUP_ELEVATION        25
+#define RESP_MIN_BPM              4
+#define RESP_MAX_BPM              60
+
+/* -------------------------------------------------------------------------- */
+/* PPG simulation — two-Gaussian model (Charlton et al., Sci Rep 2020)       */
+/* -------------------------------------------------------------------------- */
+
+/* Pulse Arrival Time: ECG R-peak to PPG foot at wrist (ms) */
+#define PPG_SIM_PAT_DEFAULT_MS     200.0f
+/* ± beat-to-beat jitter applied via LFSR */
+#define PPG_SIM_PAT_JITTER_MS       10.0f
+/* beats in the PAT running average shown on the topbar (~4 s at 75 BPM) */
+#define PPG_PAT_AVG_BEATS            4
+
+/* Systolic Gaussian: amplitude, centre (fraction of RR), width (fraction of RR) */
+#define PPG_SIM_A1                   1.0f
+#define PPG_SIM_MU1_FRAC            0.18f
+#define PPG_SIM_SIGMA1_FRAC         0.08f
+
+/* Diastolic/reflected Gaussian */
+#define PPG_SIM_A2                   0.35f
+#define PPG_SIM_MU2_FRAC            0.45f
+#define PPG_SIM_SIGMA2_FRAC         0.12f
+
+/* -------------------------------------------------------------------------- */
+/* PPG bandpass filter                                                        */
+/* -------------------------------------------------------------------------- */
+
+/* Applied to the raw PPG sample before foot detection and chart display.
+ * Removes DC baseline wander (<0.5 Hz) and high-frequency noise (>16 Hz). */
+#define PPG_BP_LOW_HZ            0.5f
+#define PPG_BP_HIGH_HZ           16.0f
+
+/* -------------------------------------------------------------------------- */
+/* Files / Wi-Fi transfer                                                     */
+/* -------------------------------------------------------------------------- */
+
+#define FILES_MAX_LIST_COUNT        64
+#define FILES_LIST_NAME_MAX         64
+#define FILES_PATH_MAX              128
+#define FILES_TX_CHUNK_BYTES        1024
+#define FILES_HTTP_TIMEOUT_MS       15000
+#define FILES_SERVER_PORT           8000
+#define FILES_SERVER_PATH           "/upload"
+#define FILES_UPLOAD_STACK_BYTES    8192
+
+/* -------------------------------------------------------------------------- */
+/* ECG source selection                                                       */
+/* -------------------------------------------------------------------------- */
+
+/* Set to 1 to use the firmware-simulated ECG waveform instead of real ADC.
+ * On the TZT board, GPIO14 = display SPI clock and must never be used as ADC.
+ * ADC2 is also blocked during WiFi on classic ESP32. Keep this 1 until an
+ * external ADC front-end (SPI/I2C) is wired in. */
+#define ECG_USE_SIMULATED_SOURCE  1

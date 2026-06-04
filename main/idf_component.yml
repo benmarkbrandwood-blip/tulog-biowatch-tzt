@@ -1,0 +1,17 @@
+dependencies:
+  idf:
+    version: ">=6.0"
+
+  # ILI9341 SPI TFT panel driver (replaces CO5300 QSPI AMOLED via BSP)
+  espressif/esp_lcd_ili9341:
+    version: ">=1.0.0"
+
+  # LVGL retained at same version as source
+  lvgl/lvgl:
+    version: "9.5.0"
+
+  # Removed from source:
+  #   waveshare/esp32_s3_touch_amoled_2_06 — S3-only BSP; all bsp_* calls replaced in Phase 2
+  #   espressif/esp_codec_dev              — audio codec, unused on target hardware
+  #   espressif/esp_lvgl_port             — BSP-tied LVGL integration; replaced by direct esp_lcd flush in hal_display.c (Phase 2)
+  #   espressif/usb                       — S3 native USB, not present on ESP32-WROOM-32
