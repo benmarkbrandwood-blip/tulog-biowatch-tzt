@@ -34,8 +34,10 @@
 #define PIN_TP_RST     GPIO_NUM_25
 #define PIN_TP_INT     GPIO_NUM_21   /* interrupt input — NOT backlight */
 
-/* Battery ADC — ADC1_CH7, safe during WiFi (ADC1 only) */
-#define PIN_BAT_ADC    GPIO_NUM_35
+/* GPIO35 routes to external expansion connector P3, NOT to a battery sense
+ * node.  The IP5306 charger IC has no I2C path to the ESP32 on this board.
+ * Battery monitoring is unavailable; battery_read_* returns -1 permanently. */
+#define PIN_BAT_ADC    GPIO_NUM_35   /* unused — kept for reference only */
 
 /* SD card SPI (SPI3 / VSPI) — conventional mapping, verify against schematic */
 #define PIN_SD_SCLK    GPIO_NUM_18

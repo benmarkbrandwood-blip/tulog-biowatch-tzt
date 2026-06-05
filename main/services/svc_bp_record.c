@@ -167,9 +167,9 @@ esp_err_t svc_bp_rec_init(void)
     if (s_bp_queue) return ESP_OK;   /* already initialised */
 
     s_bp_queue_storage = heap_caps_malloc(
-        BP_QUEUE_LEN * sizeof(bp_row_t), MALLOC_CAP_SPIRAM);
+        BP_QUEUE_LEN * sizeof(bp_row_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     if (!s_bp_queue_storage) {
-        ESP_LOGE(TAG, "PSRAM alloc failed (%u bytes)",
+        ESP_LOGE(TAG, "DRAM alloc failed (%u bytes)",
                  (unsigned)(BP_QUEUE_LEN * sizeof(bp_row_t)));
         return ESP_ERR_NO_MEM;
     }
@@ -183,7 +183,7 @@ esp_err_t svc_bp_rec_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_LOGI(TAG, "Init OK (queue %u bytes PSRAM)",
+    ESP_LOGI(TAG, "Init OK (queue %u bytes DRAM)",
              (unsigned)(BP_QUEUE_LEN * sizeof(bp_row_t)));
     return ESP_OK;
 }

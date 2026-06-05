@@ -1,17 +1,12 @@
 #pragma once
 
-/* -------------------------------------------------------------------------- */
-/* AXP2101 PMU battery reader.                                                */
-/*                                                                            */
-/* Battery state on this board is monitored by the AXP2101 power management   */
-/* IC over the BSP shared I2C bus (GPIO14/15) at address 0x34. The previous   */
-/* ADC implementation tried GPIO1, which is the SD CMD line — it returned     */
-/* nonsense (~6.36 V) and is no longer used.                                  */
-/*                                                                            */
-/* The function names retain their `battery_adc_*` prefix for compatibility   */
-/* with existing callers; despite the name, no ADC is actually used.          */
-/* -------------------------------------------------------------------------- */
+/* Battery monitoring for TZT ESP32-2432S024C.
+ *
+ * This board uses an IP5306 boost+charger IC with no I2C interface visible
+ * in the schematic.  GPIO35 connects to the external expansion connector P3,
+ * not to a battery voltage sense node.  All functions below return sentinel
+ * values (-1 / -1.0f) permanently; callers must handle these gracefully. */
 
 void  battery_adc_init(void);
-float battery_read_voltage(void);
-int   battery_read_percent(void);
+float battery_read_voltage(void);   /* returns -1.0f — no sense path */
+int   battery_read_percent(void);   /* returns -1  — no sense path */

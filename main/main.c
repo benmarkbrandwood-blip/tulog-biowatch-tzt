@@ -358,33 +358,12 @@ static void bp_trigger_analysis(void);
  * IMPORTANT — ECG source switched to firmware simulation.
  *
  * Why this change is required (not optional):
- *   The original build wired ECG to ADC2_CH3 = GPIO14. That pin is
- *   simultaneously declared as BSP_I2C_SCL by the Waveshare 2.06 BSP
- *   (touch + audio I²C bus, see
- *   components/waveshare__esp32_s3_touch_amoled_2_06/include/bsp/
- *   esp32_s3_touch_amoled_2_06.h:35). Reading ADC2 on GPIO14 therefore:
- *
- *     1. Drives the I²C SCL line as a high-impedance analogue input,
- *        breaking touch and audio at random times.
- *     2. Contends with the WiFi PHY for the ADC2 controller — ADC2 is
- *        shared hardware on the ESP32-S3 and the WiFi driver takes a
- *        ADC2_WIFI_LOCK during association. Concurrent reads from the
- *        sampler task race with WiFi's `wifi:flush txq / stop sw txq /
- *        lmac stop hw txq` reconfiguration sequence and can hang or
- *        reset the chip — which presents to the host as the USB device
- *        disappearing mid-boot ("device reports readiness to read but
- *        returned no data").
- *     3. Causes the autoscale to collapse: when the ADC fails or returns
- *        0, running_min == running_max == 0, the scaled chart values are
- *        all zero, and the line is rendered exactly on the bottom border
- *        of the chart — invisible. This matches the observed symptom of
- *        "rest of UI updates fine, only the chart is blank".
- *
- *   No free ADC1 channel exists on this watch (every GPIO 1..10 is taken
- *   by SD/LCD), so we cannot simply move the pin. Until external analog
- *   front-end hardware is wired through SPI/I²S (e.g. ADS1292, MAX86140),
- *   the safest and most informative ECG source is a deterministic
- *   waveform generated in firmware. The waveform shape and amplitude are
+ *   On the TZT ESP32-2432S024C, GPIO14 is the display SPI clock (PIN_LCD_SCLK)
+ *   and must never be used as ADC. ADC2 is also blocked during WiFi on the
+ *   classic ESP32. ADC1 channels GPIO32–39 are available but no analog ECG
+ *   front-end is wired to the board yet. Until an external SPI/I²C ADC
+ *   (e.g. ADS1292, MAX86140) is connected, the safest and most informative
+ *   ECG source is a deterministic waveform generated in firmware. The waveform shape and amplitude are
  *   compatible with the existing Pan-Tompkins QRS detector, autoscale,
  *   and chart pipeline — those code paths are unchanged.
  *
@@ -3547,8 +3526,8 @@ void app_main(void)
     wifi_driver_init();
 
     /*
-     * Mount the on-board micro-SD card now (1-bit SDMMC via the Waveshare
-     * BSP). Failure is non-fatal — hal_storage_mount() will be retried lazily the
+     * Mount the SD card (SPI mode via sdspi_host, SPI3/VSPI, CS=GPIO5).
+     * Failure is non-fatal — hal_storage_mount() will be retried lazily the
      * first time the user starts a recording.
      */
     if (hal_storage_mount() != ESP_OK) {
