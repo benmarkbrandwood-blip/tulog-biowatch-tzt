@@ -17,12 +17,14 @@
 #include "esp_heap_caps.h"
 
 #include "lvgl.h"
+#include <string.h>
 
 /* ── Constants ───────────────────────────────────────────────────────────── */
 
-/* 240 × 32 × 2 bytes = 15 360 bytes per buffer (~15 KB each, two buffers ~30 KB). */
-#define LVGL_DRAW_BUF_LINES  32
-#define LVGL_TASK_STACK      4096
+/* 320 × 16 × 2 = 10 240 bytes per buffer; two buffers = 20 480 bytes total.
+ * No rotation buffer needed — orientation is handled by hardware MADCTL. */
+#define LVGL_DRAW_BUF_LINES  16
+#define LVGL_TASK_STACK      8192
 #define LVGL_TASK_PRIORITY   4
 
 /* Bytes per pixel for RGB565 (display native format at LV_COLOR_DEPTH=16). */
@@ -32,9 +34,10 @@ static const char *TAG = "Display";
 
 /* ── Module state ────────────────────────────────────────────────────────── */
 
-static SemaphoreHandle_t      s_lvgl_mutex  = NULL;
-static esp_lcd_panel_handle_t s_panel       = NULL;
-static lv_display_t          *s_disp        = NULL;
+static SemaphoreHandle_t         s_lvgl_mutex = NULL;
+static esp_lcd_panel_handle_t    s_panel      = NULL;
+static esp_lcd_panel_io_handle_t s_io_handle  = NULL;  /* kept for explicit MADCTL writes */
+static lv_display_t             *s_disp       = NULL;
 
 /* ── DMA-done callback (called from ISR) ────────────────────────────────── */
 
@@ -45,7 +48,7 @@ static bool IRAM_ATTR on_trans_done(esp_lcd_panel_io_handle_t panel_io,
     (void)panel_io;
     (void)edata;
     (void)user_ctx;
-    lv_display_flush_ready(s_disp);
+    if (s_disp) lv_display_flush_ready(s_disp);
     return false;
 }
 
@@ -60,10 +63,7 @@ static uint32_t lvgl_get_tick_ms(void)
 
 static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
-    /* ILI9341 over SPI expects big-endian RGB565.  LVGL 9 renders in
-     * little-endian native byte order, so swap each pair of bytes in-place
-     * before the DMA transfer.  If colours appear inverted (blue/red swapped),
-     * remove this call — some board revisions do not need it. */
+    /* ILI9341 over SPI expects big-endian RGB565; LVGL renders little-endian. */
     uint32_t px_count = (uint32_t)(area->x2 - area->x1 + 1)
                       * (uint32_t)(area->y2 - area->y1 + 1);
     lv_draw_sw_rgb565_swap(px_map, px_count);
@@ -72,8 +72,7 @@ static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
                               area->x1, area->y1,
                               area->x2 + 1, area->y2 + 1,
                               px_map);
-    /* lv_display_flush_ready() is called from the on_trans_done ISR callback
-     * once the DMA transfer completes.  Do NOT call it here. */
+    /* lv_display_flush_ready() is called from on_trans_done ISR after DMA. */
 }
 
 /* ── LVGL task ───────────────────────────────────────────────────────────── */
@@ -125,24 +124,64 @@ void hal_display_init(void)
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(
         (esp_lcd_spi_bus_handle_t)SPI2_HOST, &io_config, &io_handle));
+    s_io_handle = io_handle;  /* keep for post-init MADCTL writes (Phase 1) */
 
     /* 3. ILI9341 panel driver */
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = -1,
-        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_BGR,
+        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,  /* BGR rendered red as blue; reference demo confirms RGB */
         .bits_per_pixel = 16,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_ili9341(io_handle, &panel_cfg, &s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, false, false));
+
+    /* ── Phase 0: read chip ID to confirm ILI9341 vs ST7789 ─────────────────
+     * 0xD3 (Read ID4): ILI9341 returns {dummy, 0x00, 0x93, 0x41}
+     *                  ST7789  returns {dummy, 0x00, 0x85, 0x52} (approx)
+     * 0x04 (RDDID):    ILI9341 returns {dummy, mfr, ver, 0x41}
+     * Bytes are logged raw; if all zeros, MISO may be unconnected or need a
+     * different spi_mode for reads — identification still comes from factory demo.
+     */
+    uint8_t id4[4] = {0};
+    uint8_t rddid[4] = {0};
+    esp_err_t id_err4   = esp_lcd_panel_io_rx_param(s_io_handle, 0xD3, id4,   sizeof(id4));
+    esp_err_t id_errRDD = esp_lcd_panel_io_rx_param(s_io_handle, 0x04, rddid, sizeof(rddid));
+    ESP_LOGI(TAG, "Panel ID — 0xD3: %02X %02X %02X %02X (err=%d)   "
+                  "RDDID 0x04: %02X %02X %02X %02X (err=%d)",
+             id4[0], id4[1], id4[2], id4[3], (int)id_err4,
+             rddid[0], rddid[1], rddid[2], rddid[3], (int)id_errRDD);
+    /* Expected for ILI9341: 0xD3 → XX 00 93 41  */
+
+    /* Clear the full native GRAM (240 col × 320 row) before changing orientation
+     * so no stale content from a prior firmware bleeds through. */
+    static uint16_t s_clear_line[LCD_NATIVE_W];
+    memset(s_clear_line, 0x00, sizeof(s_clear_line));
+    for (int row = 0; row < LCD_NATIVE_H; row++) {
+        esp_lcd_panel_draw_bitmap(s_panel, 0, row, LCD_NATIVE_W, row + 1, s_clear_line);
+    }
+
+    /* Write the full MADCTL register (0x36) in one shot.
+     * This overwrites ALL bits including any scan-order bits left by the init
+     * sequence — avoids the OR-only-one-bit problem of esp_lcd_panel_swap_xy /
+     * mirror.  LCD_MADCTL is defined in app_config.h; change it and reflash to
+     * sweep orientations without touching any other code.
+     * BGR bit (0x08) is CLEAR — RGB element order + lv_draw_sw_rgb565_swap()
+     * in the flush is confirmed-correct for this panel. */
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(s_io_handle, 0x36,
+                    (uint8_t[]){LCD_MADCTL}, 1));
+    ESP_LOGI(TAG, "MADCTL set to 0x%02X", (unsigned)LCD_MADCTL);
+
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
 
     /* 4. LVGL core + tick source */
     lv_init();
     lv_tick_set_cb(lvgl_get_tick_ms);
 
-    /* 5. LVGL display object + flush callback */
+    /* 5. LVGL display object + flush callback.
+     *    Create at the logical landscape resolution — MADCTL has already told the
+     *    panel to treat its long axis as horizontal, so LVGL's 320-wide rows map
+     *    directly to 320-wide GRAM rows with no software rotation needed. */
     s_disp = lv_display_create(LCD_H_RES, LCD_V_RES);
     lv_display_set_flush_cb(s_disp, lvgl_flush_cb);
 

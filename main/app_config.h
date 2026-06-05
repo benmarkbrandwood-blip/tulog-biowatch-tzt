@@ -3,11 +3,31 @@
 #include "driver/gpio.h"
 
 /* -------------------------------------------------------------------------- */
-/* Display — ILI9341 SPI TFT 240×320                                         */
+/* Display — ILI9341 SPI TFT, native 240×320, run in landscape 320×240        */
+/* Orientation set by writing a full MADCTL byte (0x36) directly after init.  */
 /* -------------------------------------------------------------------------- */
 
-#define LCD_H_RES               240
-#define LCD_V_RES               320
+/* Logical landscape resolution — all UI layout uses these. */
+#define LCD_H_RES               320
+#define LCD_V_RES               240
+
+/* Physical panel resolution (native portrait GRAM dimensions). */
+#define LCD_NATIVE_W            240
+#define LCD_NATIVE_H            320
+
+/* MADCTL test value written to register 0x36 after panel init.
+ * BGR bit (0x08) is CLEAR — confirmed correct colour order is RGB + byte-swap.
+ * Candidate values (USB-left orientation, BGR=0):
+ *   0xE0 = MV|MX|MY  — TFT_eSPI rotation 3 equivalent, USB-left  ← try first
+ *   0x20 = MV        — TFT_eSPI rotation 1 equivalent, USB-right
+ *   0x60 = MV|MX     — 180° from 0xA0
+ *   0xA0 = MV|MY     — 180° from 0x60
+ * Change this one value and reflash to sweep orientations.              */
+#define LCD_MADCTL              0xE0
+
+/* Set to 1 to boot into the orientation test screen (four coloured quadrants).
+ * Set to 0 to run the normal firmware. */
+#define ORIENTATION_TEST        1
 
 /* -------------------------------------------------------------------------- */
 /* Pin definitions — TZT ESP32-2432S024C (capacitive touch variant)          */

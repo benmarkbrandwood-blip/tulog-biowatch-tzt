@@ -1,77 +1,79 @@
-# CLAUDE.md — tulog-biowatch
+# CLAUDE.md — tulog-biowatch-tzt
 
 ## 1. Project Overview
 
-ESP-IDF firmware for a **Waveshare ESP32-S3-Touch-AMOLED-2.06** development board repurposed as a wearable biosignal acquisition and display platform. The project targets two clinical use cases:
+This repo is a **port of the tulog-biowatch firmware to the TZT ESP32-2432S024C board**. The source firmware was written for a Waveshare ESP32-S3-Touch-AMOLED-2.06; this repo migrates it to a budget TZT 2.4″ ESP32 touchscreen device (ESP32-WROOM-32, ILI9341 TFT, CST820 touch, no PSRAM, 4 MB flash).
+
+**Source project** (Waveshare ESP32-S3 firmware): `/home/benbrandwood/Documents/dev/esp32-s3-watch/`  
+**TZT reference materials** (schematics, Arduino demos, datasheets): `/home/benbrandwood/Documents/dev/TZT/2.4inch_ESP32-2432S024-jyc/`  
+**Migration plan**: [migration_plan.md](migration_plan.md)
+
+The firmware targets two clinical use cases:
 
 - **Overnight sleep study** — ECG, PPG/SpO₂, nasal thermistor airflow, and ERB chest band for apnoea detection and nocturnal blood pressure variance (BPV) estimation via Pulse Transit Time (PTT).
 - **Morning FCG session** — wrist Forcecardiography (FCG) at 1000 Hz for Pre-Ejection Period (PEP) derivation and post-OSA morning BPV tracking.
 
-The current codebase is **Stage 1 firmware**: the sensing pipeline, logging flow, Wi-Fi, time sync, and UI are validated using simulated or placeholder sensor data. Stage 2 will integrate real external sensors (ADS127L18, MAX86140, AD8232).
-
 ---
 
-## 2. Current Project Status
+## 2. Migration Status
 
-### Working and implemented
+### Phases complete
+- **Phase 1** — scaffold: `CONFIG_IDF_TARGET="esp32"`, BSP removed, managed components resolved, `app_config.h` ported with TZT pin defines, `partitions.csv` redesigned for 4 MB flash.
+- **Phase 2** — HAL layer: `hal_backlight.c/h` (LEDC GPIO27), `hal_display.c/h` (ILI9341/SPI2, LVGL 9.5, FreeRTOS mutex, async DMA flush), `hal_touch.c/h` (CST820/I2C0 GPIO33/32). All `bsp_*` symbols eliminated.
+- **Phase 3** — peripherals: `hal_storage.c` replaced with `sdspi_host` (SPI3/VSPI); `hal_battery.c` is a permanent stub (IP5306, no sense path); `svc_bp_record.c` DRAM alloc fix (was `MALLOC_CAP_SPIRAM`); `BP_QUEUE_LEN` reduced from 2048 → 512 for DRAM budget.
+
+### Working and tested on hardware
 - Boots to Wi-Fi scan screen → home clock screen
+- ILI9341 display renders via LVGL 9.5
+- CST820 touch input registered in LVGL
+- Backlight LEDC PWM on GPIO27
 - Wi-Fi scan/connect with up to 3 auto-retries
 - NVS credential persistence per SSID
-- SNTP time sync (pool.ntp.org); last synced time restored from NVS on reboot
-- Battery monitoring via AXP2101 PMU over I²C (register read at 0x34)
-- ECG sampling at 100 Hz — **firmware-simulated P-QRS-T waveform** (see §8)
-- Pan-Tompkins-inspired QRS detector: bandpass → derivative → square → moving window integration → adaptive threshold
-- Heart rate estimate (adaptive smoothed BPM from RR intervals)
-- Respiration rate estimate (delayed-signal intersection counting over 20 s window)
+- SNTP time sync; last synced time restored from NVS on reboot
+- ECG sampling at 100 Hz — firmware-simulated P-QRS-T waveform
+- Pan-Tompkins-inspired QRS detector, heart rate estimate, respiration rate estimate
 - Record screen: ECG chart (4 s rolling window, 200 display points), topbar metrics
-- SD card recording to CSV at 100 Hz; lazy mount with retries; 4 KB stdio buffer
-- CSV columns: `time_ms, ecg, ppg, resp, nas, fcg1, fcg2, drift_ms, batt_v, spo2, resp_rate, hr_bpm, rr_ms, pat_ms, r_peak_ms`
-- Sample drift tracking (`actual_ms − expected_ms` = cumulative wall-clock vs expected time)
-- Display brightness slider and screen-sleep timeout (configurable in Settings)
-- BOOT button: short press wakes screen or returns to Home
-- **B.P. screen** — fully implemented: 30/60/120 s selectable duration; `bp_sampler_task` reads ECG/PPG ring buffers at 1 kHz; `svc_bp_record` service writes CSV (`time_ms, ecg, ppg, drift_ms, r_peak_ms, rr_us, pat_us`); post-recording HRV RMSSD and PAT mean/variance analysis; beat-by-beat RR/PAT chart (up to 64 beats, µs scale); lazy chart build after analysis completes
-- **Files screen** — fully implemented: enumerates SD card files, shows name/size/type (REC/BP) sorted newest-first; file selection with highlight; Refresh, Connect WiFi, Send, Delete buttons; HTTP POST upload to PC receiver (`10.42.0.1:8000/POST /upload`, Linux NM hotspot) via `svc_files` service; background upload task with 250 ms progress polling; delete with immediate list refresh; Wi-Fi Back button returns to Files screen after connecting
+- SD card recording to CSV at 100 Hz via `sdspi_host`
+- B.P. screen — 30/60/120 s recording; 1 kHz sampler; CSV with RR/PAT in µs; post-recording HRV RMSSD + PAT analysis; beat-by-beat chart
+- Files screen — SD enumeration, HTTP POST upload to PC receiver, file deletion
 
 ### Partially implemented / placeholder
-- PPG, RESP, NAS, FCG1, FCG2 channels: recorded as sine-wave simulations; no real sensors
-- SpO₂ field in CSV is always 0; MAX86140 not integrated
+- PPG, RESP, NAS, FCG1, FCG2: recorded as sine-wave simulations; no real sensors
+- SpO₂ field in CSV is always 0
+- Battery: `battery_read_voltage()` and `battery_read_percent()` permanently return -1 / -1 (IP5306 has no I2C or ADC path to ESP32 on this board)
 - About screen is a stub (back button only)
 
-### Not started
-- ADS127L18 SPI driver (8-channel 24-bit ΔΣ ADC for FCG/ECG/nasal/ERB)
-- MAX86140 SPI driver (optical PPG/SpO₂)
-- AD8232 ECG AFE integration
-- PCF85063 RTC periodic sync to `esp_timer_get_time()`
-- QMI8658 IMU data path (hardware present; no firmware driver used)
-- Wi-Fi service extraction (Phase 6D of refactor plan — deferred indefinitely)
-- ECG sampler task extraction (Phase 6F — planned, not done)
+### Not started (Phase 4+)
+- UI layout redesign for 240×320 (currently scaled from 410×502 — widgets may overflow or crowd)
+- Real ECG via external ADC front-end (GPIO14 = display SPI clock; ADC2 blocked during WiFi — must use SPI/I2C ADC)
+- PPG/SpO₂, FCG, nasal, ERB sensor drivers
 - MATLAB post-processing pipeline
-
-### Unclear / requires hardware verification
-- Whether `bsp_i2c_get_handle()` returns a valid handle before `bsp_display_start()` is called (battery_adc_init() is called before display init in app_main).
-- AXP2101 fuel-gauge register 0xA4 reporting 0 before cell learning: fallback linear voltage estimate is implemented.
-- SD card 1-bit SDMMC reliability on the specific board revision in use.
 
 ---
 
 ## 3. Hardware Stack
 
+### Target board: TZT ESP32-2432S024C (capacitive touch variant)
+
 | Component | Role | Bus / Interface |
 |---|---|---|
-| ESP32-S3R8 | MCU, dual-core LX7 @ 240 MHz, 8 MB OPI PSRAM, 32 MB Flash | — |
-| CO5300 AMOLED 410×502 | Display | QSPI (CLK GPIO38, D0–D3 GPIO4–7, CS GPIO12, RST GPIO39, TE GPIO13) |
-| FT3168 | Capacitive touch | I²C shared bus (SDA GPIO15, SCL GPIO14) |
-| AXP2101 | PMU: LiPo charging, battery voltage/percent | I²C 0x34 (GPIO14/15 shared) |
-| PCF85063 | RTC ±2 ppm TCXO | I²C (GPIO14/15 shared) — not actively used in firmware |
-| QMI8658 | 6-axis IMU @ 896 Hz | I²C (GPIO14/15 shared) — not used in firmware |
-| TF/microSD | Raw data logging, FAT filesystem | SDMMC 1-bit (CLK GPIO2, CMD GPIO1, D0 GPIO3) |
+| ESP32-WROOM-32 | MCU, dual-core LX6 @ 240 MHz, 520 KB SRAM, **no PSRAM**, 4 MB Flash | — |
+| ILI9341 TFT 240×320 | Display | SPI2/HSPI (MOSI GPIO13, MISO GPIO12, CLK GPIO14, CS GPIO15, DC GPIO2) |
+| CST820 | Capacitive touch | I²C0 (SDA GPIO33, SCL GPIO32, RST GPIO25, INT GPIO21) |
+| IP5306 | LiPo boost charger — **no I2C to ESP32, no ADC sense line** | None — battery monitoring unavailable |
+| TF/microSD | Raw data logging, FAT filesystem | SPI3/VSPI (CLK GPIO18, MISO GPIO19, MOSI GPIO23, CS GPIO5) |
+| Backlight | LEDC PWM | GPIO27 (active-HIGH, N-channel AO3402A) |
 | BOOT button | User input | GPIO0 (active-low, pull-up) |
-| **Planned — daughter PCB** | | |
-| ADS127L18 | 8-ch 24-bit ΔΣ ADC: FCG (ch0/1), ECG (ch2), nasal (ch3), ERB (ch4) | SPI2 up to 25 MHz, DRDY ISR |
-| AD8232 | Single-lead ECG AFE (analog output to ADS127L18 ch2) | Analog (no SPI) |
-| MAX86140 | Optical PPG + SpO₂ (19-bit, FIFO 128 words) | SPI3 up to 10 MHz, INT pin |
+| RGB LED | Not used in firmware | GPIO4/16/17 (common anode, active-low) |
 
-**Critical constraint**: GPIO14 is simultaneously BSP_I2C_SCL (touch + AXP2101 + PCF85063 bus) and ADC2_CH3. Reading ADC2 on GPIO14 breaks I²C and races with the Wi-Fi PHY — this is why ECG uses a simulated waveform.
+**Critical pin notes:**
+- **GPIO14 = display SPI clock** — never use as ADC. On the source (Waveshare) board this was the I²C SCL and ECG ADC path; on this board it is the LCD clock.
+- **GPIO21 = touch INT** on the capacitive variant. The Getting Started PDF shows `TFT_BL=21` — that is for the **resistive** variant. Using GPIO21 as backlight output will drive the touch INT line and break touch.
+- **ADC2 blocked during WiFi** on classic ESP32 (unlike S3). All sensor ADC must use ADC1 channels (GPIO32–39).
+- **GPIO35 = expansion connector P3**, not a battery sense node. Do not implement ADC on GPIO35.
+
+### Source board (for reference only — not the target)
+Waveshare ESP32-S3-Touch-AMOLED-2.06 — ESP32-S3R8, 8 MB OPI PSRAM, 32 MB flash, CO5300 AMOLED QSPI, FT3168 touch, AXP2101 PMU. Source firmware at `/home/benbrandwood/Documents/dev/esp32-s3-watch/`.
 
 ---
 
@@ -81,19 +83,21 @@ The current codebase is **Stage 1 firmware**: the sensing pipeline, logging flow
 ```
 main/
 ├── main.c              # App entry, all screen creation, Wi-Fi, ECG sampler task, BP screen + bp_sampler_task
-├── app_config.h        # All numeric/string constants
+├── app_config.h        # All numeric/string constants, all TZT pin defines
 ├── app_state.h         # rec_row_t, bp_row_t, bp_analysis_t, rec_tab_t, health_tab_t
 ├── ui/
 │   ├── ui_common.h     # Colour palette macros, helper declarations
 │   └── ui_common.c     # style_screen, style_button, style_card, make_title, etc.
 ├── hal/
-│   ├── hal_battery.c/h # AXP2101 I²C battery reader
-│   ├── hal_display.c/h # hal_display_lock() LVGL mutex wrapper
-│   └── hal_storage.c/h # SD card mount via bsp_sdcard_mount() with retries
+│   ├── hal_backlight.c/h # LEDC PWM backlight, GPIO27
+│   ├── hal_battery.c/h   # IP5306 stub — returns -1 permanently
+│   ├── hal_display.c/h   # ILI9341 SPI2, LVGL 9.5, FreeRTOS mutex, async DMA flush
+│   ├── hal_touch.c/h     # CST820 I2C0 driver, LVGL indev registration
+│   └── hal_storage.c/h   # SD card via sdspi_host (SPI3/VSPI) with retries
 ├── services/
 │   ├── svc_nvs.c/h     # NVS Wi-Fi credential helpers
 │   ├── svc_record.c/h  # SD writer task, CSV file open/write/close (Record screen)
-│   ├── svc_bp_record.c/h # BP recording: PSRAM queue, writer task, CSV, bp_analyse_file()
+│   ├── svc_bp_record.c/h # DRAM queue (512 × bp_row_t), writer task, CSV, bp_analyse_file()
 │   ├── svc_files.c/h   # SD enumeration, HTTP POST upload, file deletion
 │   └── svc_time.c/h    # SNTP sync, NVS time persistence/restore
 └── signal/
@@ -110,85 +114,80 @@ main/
 | `wifi_scan_task` | any | 5 | 6144 | One-shot Wi-Fi scan; self-deletes |
 | `wifi_connect_task` | any | 5 | 8192 | Connect + SNTP sync; self-deletes |
 | `sd_writer_task` | 1 | 6 | 4096 | CSV row writer; spawned on REC start, self-deletes on stop |
-| `bp_sampler_task` | 1 | 6 | 4096 | 1 kHz BP sampler; reads ECG/PPG ring buffers under spinlock; spawned on BP start, self-deletes on stop |
-| `bp_writer_task` | 1 | 6 | 4096 | BP CSV writer; drains PSRAM queue; spawned by svc_bp_rec_start, self-deletes on stop |
-| `bp_analysis_task` | any | 3 | 8192 | Post-recording file analysis (RMSSD, PAT stats); one-shot, self-deletes |
-| LVGL port task | 1 | — | BSP-managed | LVGL rendering and input |
+| `bp_sampler_task` | 1 | 6 | 4096 | 1 kHz BP sampler; reads ECG/PPG ring buffers under spinlock |
+| `bp_writer_task` | 1 | 6 | 4096 | BP CSV writer; drains DRAM queue |
+| `bp_analysis_task` | any | 3 | 8192 | Post-recording file analysis; one-shot, self-deletes |
+| LVGL port task | 1 | 4 | **8192** | LVGL rendering and input (stack increased from 4096 — overflow crash) |
 
 ### Key concurrency notes
 - `s_ecg_spinlock` (portMUX) protects: `s_ecg_raw[]`, `s_ppg_raw[]`, `s_ecg_write_index`, `s_ecg_total_samples`, `s_ecg_min/max`, `s_ecg_hr_bpm`, `s_ecg_sample_drift_ms`, `s_resp_rate_bpm`, `s_ecg_last_rpeak_expected`.
-- `bp_sampler_task` reads `s_ecg_raw[]`, `s_ppg_raw[]`, `s_ecg_write_index`, and `s_ecg_last_rpeak_expected` under the same `s_ecg_spinlock`.
-- All LVGL calls must be wrapped in `hal_display_lock()` / `bsp_display_lock()` when called from outside the LVGL port task.
+- `bp_sampler_task` reads ECG/PPG ring buffers under the same `s_ecg_spinlock`.
+- All LVGL calls from outside the LVGL port task must be wrapped in `hal_display_lock()`.
 - `svc_rec_enqueue()` is called from `ecg_sampler_task` under `portENTER_CRITICAL`.
-- `svc_bp_rec_enqueue()` is called from `bp_sampler_task` without a lock (the PSRAM queue handles concurrency internally).
-- `s_bp_was_recording` (volatile bool) is written by the LVGL task (timer callback and button callback) and read by the same LVGL task only — no cross-task race.
-- `battery_read_*()` called from `clock_update_task` and `ecg_sampler_task` — AXP2101 I²C is not protected by a mutex (potential issue under concurrent calls; requires hardware verification).
+- `svc_bp_rec_enqueue()` is called from `bp_sampler_task` without a lock (the queue is thread-safe internally).
+- `battery_read_*()` is a no-op stub — no I2C or ADC path exists on this board.
 
 ### Signal processing pipeline (ECG)
 1. `ecg_simulate_raw()` → 12-bit synthetic P-QRS-T sample
-2. `signal_bandpass_step()` → first-order HP + LP in series (5–15 Hz)
+2. `signal_bandpass_step()` → first-order HP + LP in series (10–15 Hz)
 3. Differentiate → square → moving window integration (15 samples @ 100 Hz)
 4. Adaptive threshold from signal/noise level tracking
 5. Refractory period (250 ms) guards against double detection
 6. BPM computed from RR interval; 3:1 weighted average smoothing
 
-### LVGL chart workaround
-LVGL 9.5 hangs if a chart with ≥ 400 points exists during the screen-load animation. The chart is built lazily 800 ms after the user navigates to the Record screen (`rec_build_chart()` gated in `rec_update_plot()`). `REC_CHART_POINTS = 200`; the 400-sample ECG window is stride-subsampled on display.
+### LVGL 9.5 implementation notes (do not re-derive)
+- `lv_color_t` is 3 bytes; draw buffers must allocate `sizeof(uint16_t)` (2 bytes) per pixel for the ILI9341 RGB565 format.
+- Flush callback must NOT call `lv_display_flush_ready()` synchronously — wire `on_color_trans_done` ISR callback on the SPI panel IO handle.
+- `lv_draw_sw_rgb565_swap(buf, px_count)` must be called in `flush_cb` to correct ILI9341 byte order.
+- LVGL 9.5 hangs if a chart with ≥ 400 points exists during the screen-load animation. The record screen chart is built lazily 800 ms after navigation. `REC_CHART_POINTS = 200`.
 
 ---
 
 ## 5. Design Background
 
-### From *Project Wrist Watch.docx*
-The platform targets obstructive sleep apnoea (OSA) assessment and blood pressure variance (BPV) tracking. OSA causes sympathetic surges at apnoea termination, producing nocturnal BP spikes of 40–80 mmHg SBP. BPV — particularly augmented beat-to-beat fluctuations driven by OSA — is an independent cardiovascular risk predictor.
+The platform targets obstructive sleep apnoea (OSA) assessment and blood pressure variance (BPV) tracking. OSA causes sympathetic surges at apnoea termination, producing nocturnal BP spikes of 40–80 mmHg SBP. BPV — beat-to-beat fluctuations driven by OSA — is an independent cardiovascular risk predictor.
 
-Key signals required:
+Key signals:
 - **ECG**: R-peak timestamps for PTT and HRV.
-- **PPG/SpO₂**: Pulse foot timestamps for PTT; SpO₂ for AHI scoring (MAX86140).
+- **PPG/SpO₂**: Pulse foot timestamps for PTT; SpO₂ for AHI scoring.
 - **Nasal thermistor (NTC)**: Airflow cessation detection.
 - **ERB chest band**: Respiratory effort classification (obstructive vs central apnoea).
 - **FCG (wrist piezo)**: Pre-Ejection Period (PEP) for contractility-corrected PTT → BP variance.
 
-Final sensor architecture (Stage 2): single ADS127L18 (24-bit, 8-ch, simultaneous sampling) for ECG/FCG/nasal/ERB on SPI2; MAX86140 for PPG/SpO₂ on SPI3; AD8232 as ECG AFE.
-
-### From *watch_design_plan_two_stage.docx*
-Formalises the **two-stage implementation path**:
-- **Stage 1** (current): Prove firmware, logging, timestamps, and signal pipeline using the onboard ADC for ECG and MAX86140 for PPG/SpO₂. The codebase currently operates in an even earlier state than described (no real hardware sensors are connected; ECG is fully simulated).
-- **Stage 2**: Migrate ECG digitisation from the ESP32-S3 SAR ADC to ADS127L18 ch2; add FCG (ch0/ch1), nasal (ch3), ERB (ch4); keep MAX86140 on its own SPI bus.
-
-Header pins available for Stage 1 external sensor wiring: VBUS, GND, D+/IO20, D-/IO19, IO15, IO14, RXD/GPIO44, TXD/GPIO43, 3VS.
-
-### Current firmware alignment with the plan
-The firmware implements the Stage 1 software infrastructure (logging, Wi-Fi, time, recording, display) but without any real sensors connected. The signal pipeline structure (bandpass, QRS detection, respiration rate, per-channel recording) is ready for real data — replacing `ecg_simulate_raw()` with a real ADC read is all that is needed for ECG when hardware is available. PPG, nasal, ERB, and FCG channels require new driver modules.
+Planned sensor architecture: ADS1220 or ADS1293 on a dedicated SPI bus (GPIO32/33/25) for ECG/FCG/nasal/ERB; MAX30102 on I2C (GPIO21/22) for PPG/SpO₂. See [IO-pin-plan.md](IO-pin-plan.md) for full GPIO assignment.
 
 ---
 
 ## 6. Build & Development Workflow
 
-**Prerequisites**: ESP-IDF 6.0.x installed and sourced (`$IDF_PATH` set).
+**Prerequisites**: ESP-IDF 6.0.x installed. Source the environment before running `idf.py`.
 
 ```sh
-# First build (downloads managed components)
+. /home/benbrandwood/.espressif/v6.0.1/esp-idf/export.sh
+
+# Build
 idf.py build
 
-# Flash
-idf.py -p /dev/ttyACM0 flash
+# Flash (CH340 serial, appears as ttyUSB0 after brltty removal)
+idf.py -p /dev/ttyUSB0 flash
 
-# Monitor (USB-Serial-JTAG, hardware peripheral — does not stall under Wi-Fi load)
-idf.py -p /dev/ttyACM0 monitor
+# Monitor (UART0 via CH340, 115200 baud)
+idf.py -p /dev/ttyUSB0 monitor
 
-# Clean build
+# Build + flash + monitor combined
+idf.py -p /dev/ttyUSB0 flash monitor
+
+# Clean rebuild
 idf.py fullclean && idf.py build
-
-# Build + flash + monitor in one step
-idf.py -p /dev/ttyACM0 flash monitor
 ```
 
 **Download mode**: hold BOOT, tap RESET, release BOOT.
 
+**Serial port**: The TZT board uses a CH340 USB-serial converter → `/dev/ttyUSB0`. Unlike the Waveshare board (USB-Serial-JTAG → `/dev/ttyACM0`), this board needs the `ch341` kernel module loaded (`sudo modprobe ch341`) and `brltty` removed (`sudo apt remove brltty`) to get the port to appear.
+
 **Timezone**: set `POSIX_TZ` in [main/app_config.h](main/app_config.h). Current value: `AEST-10AEDT,M10.1.0,M4.1.0/3` (Sydney, Australia).
 
-**ECG source toggle**: `ECG_USE_SIMULATED_SOURCE` in [main/app_config.h](main/app_config.h). `1` = simulated (safe, default). `0` = ADC2/GPIO14 path (do not enable — breaks I²C and fights Wi-Fi PHY; see the large comment block in [main/main.c](main/main.c):280).
+**ECG source toggle**: `ECG_USE_SIMULATED_SOURCE` in [main/app_config.h](main/app_config.h). Must remain `1` — GPIO14 is the display SPI clock and cannot be used as ADC. Real ECG requires an external SPI/I2C ADC front-end.
 
 ---
 
@@ -196,66 +195,56 @@ idf.py -p /dev/ttyACM0 flash monitor
 
 | File | Purpose |
 |---|---|
-| [main/main.c](main/main.c) | App entry, all screen UI creation, Wi-Fi event handling, ECG sampler task, recording callbacks, BP screen + `bp_sampler_task` |
-| [main/app_config.h](main/app_config.h) | All compile-time constants: display size, ECG params, recording params, BP params (BP_SAMPLE_HZ=1000, BP_QUEUE_LEN=2048, etc.), NVS keys, battery thresholds |
-| [main/app_state.h](main/app_state.h) | Shared structs: `rec_row_t`, `bp_row_t` (rr_us/pat_us in µs), `bp_analysis_t` (hrv_rmssd_us, pat_mean_us, pat_variance_us2, int32_t series[64]), `rec_tab_t`, `health_tab_t` |
-| [main/hal/hal_battery.c](main/hal/hal_battery.c) | AXP2101 I²C driver: voltage (14-bit mV register), percent (fuel gauge with voltage fallback) |
-| [main/hal/hal_storage.c](main/hal/hal_storage.c) | SD mount via `bsp_sdcard_mount()` with 5-retry loop |
-| [main/hal/hal_display.c](main/hal/hal_display.c) | `hal_display_lock()`: polling LVGL mutex with slice-and-retry |
-| [main/services/svc_record.c](main/services/svc_record.c) | FreeRTOS queue → SD writer task; Record screen CSV file lifecycle |
-| [main/services/svc_bp_record.c](main/services/svc_bp_record.c) | PSRAM queue (2048 × `bp_row_t`) → `bp_writer_task`; BP CSV lifecycle; `bp_analyse_file()` (RMSSD, PAT mean/variance, last-64-beat series) |
-| [main/services/svc_files.c](main/services/svc_files.c) | SD file enumeration (opendir/readdir/stat, qsort newest-first); HTTP POST upload to PC receiver (`esp_http_client`, chunked, background task); file deletion via `remove()` |
-| [main/services/svc_time.c](main/services/svc_time.c) | SNTP sync with timeout and NVS persistence of last-synced epoch |
+| [main/main.c](main/main.c) | App entry, all screen UI, Wi-Fi event handling, ECG sampler task, BP screen + `bp_sampler_task` |
+| [main/app_config.h](main/app_config.h) | All compile-time constants and TZT pin defines |
+| [main/app_state.h](main/app_state.h) | Shared structs: `rec_row_t`, `bp_row_t` (rr_us/pat_us in µs), `bp_analysis_t`, `rec_tab_t`, `health_tab_t` |
+| [main/hal/hal_backlight.c](main/hal/hal_backlight.c) | LEDC PWM backlight on GPIO27 |
+| [main/hal/hal_display.c](main/hal/hal_display.c) | ILI9341 SPI2, LVGL 9.5 init, async DMA flush, FreeRTOS mutex, `hal_display_lock()` |
+| [main/hal/hal_touch.c](main/hal/hal_touch.c) | CST820 I2C0 driver, reset sequence, LVGL indev registration |
+| [main/hal/hal_battery.c](main/hal/hal_battery.c) | IP5306 stub — `battery_read_voltage()` = -1.0f, `battery_read_percent()` = -1 permanently |
+| [main/hal/hal_storage.c](main/hal/hal_storage.c) | SD card via `sdspi_host` (SPI3/VSPI) with 5-retry mount loop |
+| [main/services/svc_record.c](main/services/svc_record.c) | FreeRTOS queue → SD writer task; Record screen CSV lifecycle |
+| [main/services/svc_bp_record.c](main/services/svc_bp_record.c) | DRAM queue (512 × `bp_row_t`) → `bp_writer_task`; BP CSV lifecycle; `bp_analyse_file()` |
+| [main/services/svc_files.c](main/services/svc_files.c) | SD enumeration, HTTP POST upload to PC receiver, file deletion |
+| [main/services/svc_time.c](main/services/svc_time.c) | SNTP sync, NVS time persistence/restore |
 | [main/services/svc_nvs.c](main/services/svc_nvs.c) | Per-SSID NVS credential storage |
-| [main/signal/sig_pipeline.c](main/signal/sig_pipeline.c) | `ecg_simulate_raw()` (P-QRS-T at ~75 BPM), `signal_bandpass_step()` (first-order HP+LP) |
-| [main/signal/sig_ppg.c](main/signal/sig_ppg.c) | Two-Gaussian PPG simulation, PPG bandpass filter, `ppg_det_*` foot detector, PAT (instantaneous + EMA-smoothed) |
+| [main/signal/sig_pipeline.c](main/signal/sig_pipeline.c) | `ecg_simulate_raw()`, `signal_bandpass_step()` |
+| [main/signal/sig_ppg.c](main/signal/sig_ppg.c) | Two-Gaussian PPG simulation, foot detector, PAT |
 | [main/ui/ui_common.c](main/ui/ui_common.c) | Shared LVGL style helpers and colour palette |
-| [docs/refactor-plan.md](docs/refactor-plan.md) | Phase-by-phase modularisation history and planned future phases |
-| [sdkconfig.defaults](sdkconfig.defaults) | KConfig overrides: PSRAM, partition table, console (USB-Serial-JTAG), LVGL pool (128 KB), LVGL widgets, FAT |
-| [partitions.csv](partitions.csv) | NVS 24K + PHY 4K + factory 3M + FAT storage 28M |
-| [Project Wrist Watch.docx](Project%20Wrist%20Watch.docx) | Consolidated hardware design, physiological rationale, sensor specs, power budget |
-| [watch_design_plan_two_stage.docx](watch_design_plan_two_stage.docx) | Two-stage implementation plan; Stage 1 header pin mapping |
+| [migration_plan.md](migration_plan.md) | Full hardware delta, driver substitution plan, ordered migration steps |
+| [IO-pin-plan.md](IO-pin-plan.md) | GPIO assignments for future external biosensor modules |
+| [sdkconfig.defaults](sdkconfig.defaults) | KConfig overrides: `esp32` target, 4 MB flash, no PSRAM, UART console, LVGL custom allocator |
+| [partitions.csv](partitions.csv) | NVS 24 KB + PHY 4 KB + factory 3.5 MB + FAT storage 448 KB |
 
 ---
 
 ## 8. Constraints & Engineering Notes
 
+### Memory — no PSRAM
+The classic ESP32 has 520 KB SRAM total. WiFi stack consumes ~130 KB leaving ~390 KB for the app. There is no PSRAM.
+- **Never use `MALLOC_CAP_SPIRAM`** — will silently return NULL.
+- LVGL draw buffers: 2 × 15 360 bytes (240 × 32 × 2) allocated with `MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL`.
+- BP queue: 512 × `bp_row_t` ≈ 20 KB from DRAM (reduced from 2048 on the source board which had PSRAM).
+- `s_rec_chart_points[]` and `raw_copy[]` are `static` inside their functions to avoid blowing task stacks.
+- Monitor `esp_get_free_heap_size()` under load; target > 30 KB free headroom.
+
+### Flash — 4 MB
+Source board had 32 MB. Partition table redesigned: factory app ≤ 3.5 MB, internal FAT 448 KB. Current app binary ≈ 1.46 MB (58% of partition free).
+
 ### Sampling rates
-- ECG (simulated): 100 Hz (`ECG_SAMPLE_HZ`), 4 s window (400 samples), displayed at 50 ms refresh
-- PPG/RESP/NAS/FCG (simulated): sine waves generated at chart refresh time
+- ECG (simulated): 100 Hz, 4 s window (400 samples), displayed at 50 ms refresh
 - Target (Stage 2): ECG/FCG at 1000 Hz, nasal/ERB at 50 Hz, PPG at 100–250 Hz
 
 ### Timing / real-time requirements
-- `ecg_sampler_task` runs on Core 0, priority 8. Uses `esp_timer_get_time()` for precise period tracking; busy-waits < 1 ms with `esp_rom_delay_us()`.
-- `bp_sampler_task` runs on Core 1, priority 6. Uses `esp_timer_get_time()` with `vTaskDelay(1)` for any remaining wait each 1 ms tick — **must not use `esp_rom_delay_us` here**, as that busy-waits the full sub-ms sleep and starves the IDLE1 task, causing a task watchdog reset within seconds.
-- Sample drift = `actual_ms − expected_ms` grows as a cumulative offset from the ideal timeline. This is correct and expected — it reflects wall-clock jitter relative to an ideal grid.
-- The SD writer task uses `esp_rom_delay_us(500)` between rows to throttle SD bus. The BP writer uses `esp_rom_delay_us(200)`.
-- Both `svc_record.c` and `svc_bp_record.c` call `fsync(fileno(file))` after each periodic `fflush()` to commit the FATFS directory entry to SD card. Without `fsync`, a watchdog reset before `fclose()` leaves a 0-byte file on disk.
+- `ecg_sampler_task` Core 0, priority 8 — uses `esp_timer_get_time()` with `esp_rom_delay_us()` for sub-ms busy-wait.
+- `bp_sampler_task` Core 1, priority 6 — uses `vTaskDelay(1)` for remaining wait each 1 ms tick. **Must not use `esp_rom_delay_us` here** — busy-waits the full sleep and starves IDLE1, causing task watchdog reset within seconds.
+- Both `svc_record.c` and `svc_bp_record.c` call `fsync(fileno(file))` after periodic `fflush()` to commit the FATFS directory entry. Without `fsync`, a watchdog reset before `fclose()` leaves a 0-byte file on disk.
 
-### Memory constraints
-- 400-sample ECG ring buffer + 2000-sample respiration history live in static RAM.
-- `s_rec_chart_points[ECG_WINDOW_SAMPLES]` (400 × 2 bytes) is a `static lv_coord_t` array to keep it off the LVGL stack.
-- Raw window copy for chart rendering is `static uint16_t raw_copy[400]` inside `rec_update_plot()` for the same reason.
-- LVGL memory pool is **128 KB** (`CONFIG_LV_MEM_SIZE_KILOBYTES=128` in sdkconfig.defaults). Increased from 64 KB after the BP screen's additional objects (chart, series, result card, three duration buttons, timer) caused `LV_ASSERT_MALLOC` failures at `lv_draw_label.c` during post-SNTP screen redraws.
-- BP PSRAM queue: `BP_QUEUE_LEN * sizeof(bp_row_t) = 2048 × ~40 bytes ≈ 80 KB`, allocated from OPI PSRAM via `heap_caps_malloc(MALLOC_CAP_SPIRAM)`.
-- Current firmware flash footprint: ~1.49 MB of the 3 MB factory partition (50% free). IRAM: ~95 KB used of ~300 KB available. `esp_http_client` added ~110 KB for the Files screen. Ample headroom for Stage 2 SPI sensor drivers (~40–50 KB total).
-
-### GPIO / pin constraints
-- GPIO14 (I²C SCL) cannot be used as ADC input — it is the shared I²C bus SCL line.
-- GPIO1–10: all taken by SD (1,2,3) or LCD QSPI (4,5,6,7,12,38,39) — no free ADC1 channels.
-- GPIO0: BOOT button (active-low, pull-up).
-- GPIO14/15: shared I²C bus (FT3168, AXP2101, PCF85063, QMI8658).
-
-### Power
-- AXP2101 manages all power rails; battery read via I²C (not ADC).
-- Battery thresholds: EMPTY = 3.30 V, FULL = 4.20 V (`BATTERY_VOLTAGE_EMPTY/FULL` in app_config.h).
-- Recording stops automatically at ≤ 5% battery (`REC_BATT_STOP_PCT`).
-- Target overnight power: ~13–17 mA average (Stage 2 with MCU light-sleep).
-
-### Signal processing assumptions
-- ECG simulation runs at ~75 BPM (80 samples/beat at 100 Hz); resets autoscale every 1600 samples.
-- QRS detector uses 15-sample MWI window (`ECG_MWI_WINDOW_MS = 150 ms`), 250 ms refractory period, adaptive signal/noise level tracking.
-- Respiration rate: intersection counting over 20 s; valid range 4–60 BPM; multiplied by 3 (one zero-crossing per breath in a 20 s window → bpm = crossings × 3).
+### ADC constraints (classic ESP32)
+- ADC2 is blocked during WiFi — never use GPIO0, 2, 4, 12–15, 25–27 for sensor ADC.
+- ADC1 channels (GPIO32–39) are WiFi-safe.
+- GPIO35 is input-only and routes to the expansion header, not a battery sense node.
+- GPIO14 = display SPI clock — never use as ADC.
 
 ---
 
@@ -263,29 +252,168 @@ idf.py -p /dev/ttyACM0 flash monitor
 
 | Issue | Location | Notes |
 |---|---|---|
-| `spo2` field always 0 | `ecg_sampler_task` in main.c | MAX86140 not integrated |
+| UI layout not redesigned for 240×320 | All UI files in main.c | Source UI was 410×502; widgets are scaled but not properly laid out for portrait 240×320 |
+| `spo2` field always 0 | `ecg_sampler_task` in main.c | No optical sensor integrated |
 | PPG/NAS/FCG recorded as sine waves | `ecg_sampler_task` in main.c | Placeholder until real sensors added |
 | Drain path in `sd_writer_task` missing `hr_bpm` | svc_record.c | `snprintf` in drain loop has 11 format args, CSV header has 12 columns |
-| `battery_read_*()` called from two tasks without mutex | hal_battery.c | I²C concurrent access; not observed to fail but not protected |
-| `ui_create_settings_screen()` called twice in `app_main` | main.c | Duplicate call; second call overwrites `s_scr_settings`. Likely harmless but wasteful. |
-| PCF85063 RTC not polled | — | `esp_timer_get_time()` drifts; no periodic RTC sync implemented |
-| QMI8658 IMU not used | — | Hardware present; no firmware integration |
+| `ui_create_settings_screen()` called twice in `app_main` | main.c | Duplicate call overwrites `s_scr_settings`; harmless but wasteful |
 | Wi-Fi service (Phase 6D) not extracted | main.c | Wi-Fi state and UI callbacks remain entangled in main.c |
-| ECG sampler task (Phase 6F) not extracted | main.c | All ECG/resp state remains in main.c |
-| BP screen shows "Analysing" immediately (no recording) | `svc_bp_record.c` → `bp_open_file()`, `bp_ui_timer_cb` in main.c | Intermittent. Likely transient SD mount failure: `fopen()` fails → `svc_bp_rec_start()` returns `ESP_FAIL` → `svc_bp_rec_is_recording()` false on next 1 s timer tick → recording-to-idle transition fires with 0 recorded samples. No fix yet. |
+| ECG sampler task (Phase 6F) not extracted | main.c | All ECG/respiration state remains in main.c |
+| BP screen shows "Analysing" immediately (no recording) | `svc_bp_record.c`, `bp_ui_timer_cb` | Intermittent — transient SD mount failure on `fopen()` causes zero-sample recording |
 
 ---
 
 ## 10. Working Conventions for Claude
 
-- **BP screen uses µs for RR and PAT.** `bp_row_t.rr_us` and `bp_row_t.pat_us` are `int32_t` in microseconds. `bp_analysis_t` fields are `hrv_rmssd_us`, `pat_mean_us`, `pat_variance_us2`, and `rr_series`/`pat_series` are `int32_t[64]` in µs. The Record screen (`rec_row_t`) keeps `int16_t rr_ms`/`pat_ms` in **milliseconds** — do not conflate the two.
-- **Read code before making architectural claims.** Do not assume a sensor is integrated — verify by looking at the actual driver files.
-- **Do not invent hardware features.** The ADS127L18, MAX86140, and AD8232 are not integrated into firmware. The QMI8658 and PCF85063 are present on the board but unused in the codebase.
-- **ECG_USE_SIMULATED_SOURCE = 1 is intentional and must not be changed** without understanding the GPIO14/ADC2/I²C conflict documented in main.c:280–325 and app_config.h:126.
-- **Preserve FreeRTOS task pinning, priorities, and stack sizes** unless a change is required and explicitly justified.
-- **LVGL must always be called under `hal_display_lock()` or `bsp_display_lock()`** from tasks other than the LVGL port task.
-- **The spinlock (`s_ecg_spinlock`) is a portMUX**, not a FreeRTOS mutex — use `portENTER_CRITICAL` / `portEXIT_CRITICAL`, never from ISR context.
-- **Keep diffs small.** This is a refactor-first project. Prefer extracting one module at a time; avoid sweeping changes.
-- **Update CLAUDE.md** when understanding of hardware or architecture changes materially.
-- **Check docs/refactor-plan.md** before proposing any structural change — planned phases are already documented there.
-- **Use Australian English** spelling in all documentation (organise, behaviour, colour, practise, recognise, modularise).
+- **This is the TZT target repo.** The Waveshare ESP32-S3 source is at `/home/benbrandwood/Documents/dev/esp32-s3-watch/`. TZT reference materials (schematics, Arduino demos) are at `/home/benbrandwood/Documents/dev/TZT/2.4inch_ESP32-2432S024-jyc/`. Read those when verifying hardware behaviour.
+- **No PSRAM.** Never use `MALLOC_CAP_SPIRAM`. All dynamic allocation uses `MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL` or plain `malloc`.
+- **GPIO14 = display clock.** `ECG_USE_SIMULATED_SOURCE = 1` must not be changed without wiring an external SPI/I2C ADC front-end.
+- **Battery monitoring unavailable.** `battery_read_voltage()` and `battery_read_percent()` return -1 permanently. Do not attempt to implement ADC on GPIO35 or I2C on the IP5306.
+- **BP screen uses µs for RR and PAT.** `bp_row_t.rr_us` and `bp_row_t.pat_us` are `int32_t` microseconds. `rec_row_t.rr_ms` / `pat_ms` are `int16_t` milliseconds — do not conflate the two.
+- **LVGL must always be called under `hal_display_lock()`** from tasks other than the LVGL port task.
+- **The spinlock (`s_ecg_spinlock`) is a portMUX**, not a FreeRTOS mutex — use `portENTER_CRITICAL` / `portEXIT_CRITICAL`.
+- **Read code before making architectural claims.** Verify sensor integration by looking at actual driver files, not docs.
+- **Keep diffs small.** Prefer extracting one module at a time.
+- **Check migration_plan.md** before proposing structural changes.
+- **Use Australian English** in all documentation (organise, behaviour, colour, practise, recognise, modularise).
+
+---
+
+## 11. Display Orientation — OPEN INVESTIGATION (handoff, 2026-06-05)
+
+**Status: UNSOLVED. The display is currently mis-rendering.** Goal: run the ILI9341 in
+**landscape 320×240, USB on the left, readable (non-mirrored) text, full-screen fill,
+correct colours.** A four-quadrant test pattern is gated behind `ORIENTATION_TEST` in
+[main/app_config.h](main/app_config.h) (set to `1` = test screen, `0` = normal UI). The
+test pattern lives in [main/main.c](main/main.c) around the `#if ORIENTATION_TEST` block
+(`MK_Q` macro draws RED top-left, GREEN top-right, BLUE bottom-left, YELLOW bottom-right,
+plus a "v USB v" label).
+
+### Ground truth from the working TZT reference demos (verified, trust these)
+Source: `/home/benbrandwood/Documents/dev/TZT/2.4inch_ESP32-2432S024-jyc/1-Demo/Demo_Arduino/`
+- Panel is **ILI9341, native 240×320 portrait**, `offset_x/y = 0`, `invert = false`.
+  (`7_1_..._LovyanGFX` Panel_ILI9341 cfg: memory/panel 240×320; `1_2_Factory...` TFT_eSPI
+  `User_Setup.h`: `ILI9341_DRIVER`, `TFT_WIDTH 240`, `TFT_HEIGHT 320`.)
+- **Colour order = RGB + byte-swap.** `7_3_..._LovyanGFX` uses `rgb_order = false` +
+  `tft.setSwapBytes(true)`, and labels `fillScreen(0xF800)` as 红 (red). `0xF800` is pure
+  red in RGB565, so to display as red the panel must be in **RGB element order** with a
+  byte (endian) swap. → in esp_lcd use `LCD_RGB_ELEMENT_ORDER_RGB` **and** keep
+  `lv_draw_sw_rgb565_swap()` in the flush. (The original code used BGR, which made red
+  render as blue — that was a real bug, now fixed.)
+- **USB-left = TFT_eSPI rotation 3.** `7_3_..._LovyanGFX` setup():
+  `tft.setRotation(0); // USB Right` and `//tft.setRotation(3); // USB Left`.
+  For ILI9341, TFT_eSPI rotation 3 MADCTL = `0xE8` = MV | MX | MY | BGR
+  (rotation 1 = `0x28` = MV | BGR is the other landscape, USB right).
+
+### What has been tried in this repo and the observed result
+All edits were to [main/hal/hal_display.c](main/hal/hal_display.c) +
+[main/app_config.h](main/app_config.h). LVGL display object is created at
+`(LCD_H_RES, LCD_V_RES)`. The GRAM is cleared in **native 240×320 coords** in a loop
+**before** swap/mirror are applied (see `s_clear_line[240]` loop) — that part is fine.
+
+- **Config A (original baseline):** `LCD_H_RES=240, LCD_V_RES=320`,
+  `swap_xy=false`, `mirror(true,false)`, `rgb_ele_order=BGR`, draw-buf 32 lines.
+  Result (held landscape, USB-left): coherent content but **portrait** — fills only the
+  left ~3/4, **grey snowy strip in the right ~1/4** (leftover Arduino-demo GRAM, never
+  written because LVGL is only 240 px on the 320-px-wide axis); **colours R/B-swapped**
+  (red showed blue); text readable.
+- **Config B (current on disk + flashed):** `LCD_H_RES=320, LCD_V_RES=240`,
+  `swap_xy=true`, `mirror(false,false)`, `rgb_ele_order=RGB`, draw-buf reduced to 24
+  lines (keeps per-buffer bytes = old 15 360, so DRAM budget unchanged).
+  Result: **far worse — fine vertical stripes** (orange/yellow over left 1/3, blue over
+  middle 1/3) and the **grey snowy strip still on the right 1/3**. Text unreadable.
+
+### Diagnosis / leading hypothesis
+The vertical-stripe shear is the signature of a **pixel-buffer / address-window width
+mismatch** introduced by hardware `esp_lcd_panel_swap_xy(true)`. `esp_lcd_panel_draw_bitmap`
+swaps only the CASET/RASET *window* coords; it does **not** transpose the pixel buffer.
+On this IDF 6.0.1 `esp_lcd_ili9341` component the MV-bit transpose does not line up with
+LVGL's row-major partial buffer, so a 320-wide LVGL area is streamed into a 240-wide
+physical GRAM row and shears. The colour order (RGB) and the chosen mirror flags are
+**not** the cause of the stripes — mirrors only flip, they cannot shear.
+
+### Recommended next step (for opus) — two viable paths
+1. **Preferred: LVGL software rotation, keep the panel in its coherent native portrait
+   addressing.** Set `swap_xy=false` (Config-A addressing, which rendered coherent
+   pixels), keep `rgb_ele_order=RGB` + byte-swap, create the LVGL display at the *native*
+   240×320, then call `lv_display_set_rotation(s_disp, LV_DISP_ROTATION_90)` (try 90 and
+   270 — one gives USB-left). LVGL transposes pixels in software so the buffer matches the
+   native window → no shear, and because the logical surface is now 320×240 it fills the
+   whole panel (kills the grey strip). Caveat: LVGL 9 software rotation in
+   `RENDER_MODE_PARTIAL` may need a full-width draw buffer or `RENDER_MODE_FULL`; watch
+   DRAM (no PSRAM — a full 320×240×2 = 150 KB framebuffer will NOT fit, so partial +
+   rotation is required, verify it renders without shear).
+2. **Alternative: bypass esp_lcd's coord-swap and push MADCTL `0xE8` directly** via
+   `esp_lcd_panel_io_tx_param(io, 0x36, (uint8_t[]){0xE8}, 1)`, create LVGL at 320×240,
+   and do **not** call `esp_lcd_panel_swap_xy`/`mirror`. This replicates TFT_eSPI
+   rotation-3 exactly. Risk: it still relies on the MV bit, so if the shear is truly a
+   buffer-transpose issue it may persist — test the test-pattern before trusting it.
+
+Verify on the `ORIENTATION_TEST=1` four-quadrant screen first (RED must be physically
+top-left, full-screen fill, no grey strip), then set `ORIENTATION_TEST=0`. **Note:** the
+real UI screens in main.c were laid out for 240×320 portrait and will need a separate
+240×320→320×240 layout pass once orientation/colour plumbing is correct.
+
+### Build / flash for this investigation
+`. /home/benbrandwood/.espressif/v6.0.1/esp-idf/export.sh && idf.py build && idf.py -p /dev/ttyUSB0 flash`
+(board is a CH340 → `/dev/ttyUSB0`). Current binary ≈ 1.27 MB, 65% partition free.
+
+---
+
+### UPDATE 2026-06-05 (later) — software rotation IMPLEMENTED, partially working
+
+**Root cause confirmed by reading the component source:**
+`managed_components/espressif__esp_lcd_ili9341/esp_lcd_ili9341.c` `panel_ili9341_draw_bitmap`
+(lines 288-317) sets `CASET=x_start..x_end` / `RASET=y_start..y_end` **verbatim — it never
+transposes coordinates for `swap_xy`.** So with MV set, LVGL streams row-major while the
+controller fills column-first → shear + grey strip. Hardware `swap_xy` is therefore unusable
+with this component. Also confirmed: **LVGL 9.5 has no automatic software pixel-rotation for
+PARTIAL render mode** (core rotation is gated behind `matrix_rotation`, which needs
+`LV_DRAW_TRANSFORM_USE_MATRIX` + a FULL/DIRECT framebuffer = 320×240×2 = 150 KB, impossible
+without PSRAM). So rotation must be done by hand in `flush_cb`.
+
+**What is now implemented (current code on disk + flashed):**
+- `app_config.h`: `LCD_H_RES=320, LCD_V_RES=240` (logical), `LCD_NATIVE_W=240, LCD_NATIVE_H=320`,
+  and tunable macros `LCD_LV_ROTATION` (=`LV_DISPLAY_ROTATION_270`), `LCD_MIRROR_X` (=false),
+  `LCD_MIRROR_Y` (=false).
+- `hal_display.c`: panel kept in NATIVE portrait (`swap_xy=false`, `mirror(MIRROR_X,MIRROR_Y)`),
+  `rgb_ele_order=RGB`. Display created at native 240×320 then `lv_display_set_rotation(...270)`.
+  `flush_cb` now rotates every chunk in software: `lv_display_rotate_area()` to map the logical
+  area → native panel rect, `lv_draw_sw_rotate()` into a 3rd buffer `s_rot_buf`, then
+  `lv_draw_sw_rgb565_swap()`, then `esp_lcd_panel_draw_bitmap()`. Buffers: 2 draw + 1 rotation,
+  each `320×16×2 = 10 240 B` (≈30 KB total, memory-neutral).
+- Boot log healthy: `Display: Init OK — ILI9341 320×240, 2×10240-byte draw buffers`, no crash,
+  heap fine (DRAM 75 KB + 111 KB regions free at init). (SD mount fails = no card inserted,
+  unrelated.)
+
+**Observed result on the ORIENTATION_TEST screen (photo 2026-06-05):**
+- ✅ **Colours now CORRECT** — RGB element order + byte-swap is the right combo (keep it).
+- ❌ **Text is MIRROR-REVERSED (backward).**
+- ❌ **Quadrants scrambled / DUPLICATED** — green appears on BOTH left and right, yellow-green on
+  both bottom sides, a red column up the centre-top and blue column centre-bottom.
+- ❌ **Grey strip still on the right**; image still looks essentially portrait, 90° out on the
+  short landscape axis. USB label points at the USB.
+
+**Interpretation / where to start tomorrow:**
+1. **Backward text = a mirror problem.** First cheap thing to try: flip the mirror macros —
+   set `LCD_MIRROR_X true` (and/or `LCD_MIRROR_Y true`) in `app_config.h`, and try
+   `LCD_LV_ROTATION = LV_DISPLAY_ROTATION_90`. These are one-line edits + reflash. Sweep the
+   4 combos (rot 90/270 × mirror_x/_y) — but note the duplication below may need fixing first.
+2. **The duplication/scramble is the real blocker** and is NOT just a mirror/rotation choice —
+   it means the per-chunk rotate *placement* is wrong for PARTIAL mode. Prime suspects:
+   - `src_stride`: the px_map LVGL hands to `flush_cb` may have a stride wider than `w` (buffer
+     stride, not area stride). We used `lv_draw_buf_width_to_stride(w,cf)`; verify against the
+     actual buffer. If LVGL renders into a fixed-width (320) buffer and passes a sub-area,
+     the row stride is the BUFFER width, not the area width → would shear/duplicate exactly
+     like this. **This is the most likely bug.** Add a temporary `ESP_LOGI` in `flush_cb`
+     dumping `area->x1/y1/x2/y2` and the computed `phys` rect + strides for the first ~6 flushes
+     and confirm they tile the native panel without overlap.
+   - Confirm `lv_draw_sw_rotate` dest layout matches what `esp_lcd_panel_draw_bitmap` expects
+     (tight, dest_stride = phys_rect_width × 2).
+3. If partial-rotation keeps fighting, the debuggable fallback is a hand-written transpose loop
+   in `flush_cb` (slower, but you control every index) — or render full-width strips only and
+   place them as vertical native strips, verifying x-offset increments correctly.
+
+**Reference ground truth still stands:** panel native 240×320, RGB+byteswap = correct colour,
+TFT_eSPI rotation 3 = USB-left. The colour half of the problem is SOLVED; only the geometry
+(rotation placement + mirror) remains.
