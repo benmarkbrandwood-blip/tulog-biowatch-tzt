@@ -1,4 +1,6 @@
-# tulog-biowatch
+# tulog-biowatch-tzt
+
+> **This is the TZT ESP32-2432S024C port.** The original Waveshare ESP32-S3 source firmware is at `/home/benbrandwood/Documents/dev/esp32-s3-watch/`. See [CLAUDE.md](CLAUDE.md) and [migration_plan.md](migration_plan.md) for the full migration context.
 
 A wearable biosignal acquisition and display platform built on the **Waveshare ESP32-S3-Touch-AMOLED-2.06** development board. The firmware implements a complete watch UI, Wi-Fi + SNTP time synchronisation, ECG signal processing, and SD card data logging as a validated Stage 1 software foundation, prior to integrating the full external sensor suite. 
 
@@ -304,6 +306,78 @@ tulog-biowatch/
 
 - **Phase 6D** — Wi-Fi service extraction (`svc_wifi`). Currently deferred — Wi-Fi tasks are entangled with LVGL callbacks in main.c. Proposed interface: `svc_wifi_event_cb_t` callback pattern (see docs/refactor-plan.md).
 - **Phase 6F** — ECG sampler task extraction (`sig_ecg`). Highest-risk extraction; all ECG/respiration state and the ring buffer must move while preserving timing behaviour.
+
+---
+
+---
+
+## Screen Orientation — ILI9341 on the TZT ESP32-2432S024C
+
+This section documents the confirmed-working display orientation configuration for
+the TZT board, which required significant investigation to resolve. Record it here
+so it is never lost.
+
+### The answer
+
+The ILI9341 panel on this board is **physically mounted in landscape orientation**
+(the long physical axis is the column axis = 320 columns wide × 240 rows tall).
+Despite the ILI9341 datasheet quoting 240×320, the TZT board glass is landscape-native.
+
+**Working configuration** (in [main/app_config.h](main/app_config.h) and
+[main/hal/hal_display.c](main/hal/hal_display.c)):
+
+| Setting | Value | Reason |
+|---|---|---|
+| `LCD_H_RES` | `320` | Logical width — matches the 320-column physical panel |
+| `LCD_V_RES` | `240` | Logical height — matches the 240-row physical panel |
+| `LCD_MADCTL` | `0x40` | MX bit (mirror column scan); no MV (no axis swap); BGR bit clear |
+| `rgb_ele_order` | `LCD_RGB_ELEMENT_ORDER_RGB` | Panel is RGB order |
+| `lv_draw_sw_rgb565_swap()` | in flush callback | Corrects SPI big-endian byte order |
+| LVGL software rotation | none | Not needed; hardware MADCTL is sufficient |
+
+### Critical sequencing rule
+
+The MADCTL register **must be written before the GRAM clear**. If the GRAM is
+cleared while the panel is still in a stale orientation from a previous flash,
+the clear addresses the wrong columns/rows and leaves a grey strip. The correct
+order in `hal_display_init()` is:
+
+1. Panel reset + `esp_lcd_panel_init()`
+2. **Write MADCTL** via `esp_lcd_panel_io_tx_param(io, 0x36, {LCD_MADCTL}, 1)`
+3. **Then clear GRAM** (240 × 320 loop in native portrait coords)
+4. Turn display on
+5. LVGL init at 320×240
+
+### Why not `esp_lcd_panel_swap_xy()` / `mirror()`?
+
+The `esp_lcd_ili9341` component's `swap_xy` and `mirror` functions only OR/clear
+**individual MADCTL bits** onto whatever the init sequence left. If the init
+leaves any scan-order bits set, the combination produces shear (vertical stripe
+corruption). Writing the **full MADCTL byte** in one shot via `io_tx_param`
+overwrites all bits cleanly — this is what TFT_eSPI's `setRotation()` does and
+is why that library works reliably on this hardware.
+
+### Tuning orientation
+
+To change orientation, edit only `LCD_MADCTL` in `app_config.h` and reflash.
+BGR bit (`0x08`) must stay **clear** — RGB element order is confirmed correct.
+
+| `LCD_MADCTL` | Effect |
+|---|---|
+| `0x40` | **Working — landscape, correct orientation** |
+| `0x00` | Native (landscape columns addressed only 0..239, grey strip) |
+| `0xC0` | 180° rotation |
+| `0x80` | Mirror rows only |
+
+### What did not work (and why)
+
+- **`swap_xy=true` via `esp_lcd_panel_swap_xy()`** — produces vertical stripe shear because
+  the component sets the MV bit in MADCTL but `draw_bitmap` still sends CASET/RASET
+  in the original axis order. The pixel stream and GRAM scan direction disagree.
+- **LVGL software rotation** (`lv_display_set_rotation`) in PARTIAL render mode — LVGL 9.5
+  does not automatically transpose pixels for partial buffers without
+  `LV_DRAW_TRANSFORM_USE_MATRIX` + a full-screen framebuffer (150 KB, impossible without PSRAM).
+- **`LCD_RGB_ELEMENT_ORDER_BGR`** — renders red as blue. RGB is correct for this panel.
 
 ---
 

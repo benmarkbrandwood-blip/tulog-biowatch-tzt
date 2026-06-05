@@ -279,15 +279,25 @@ Source board had 32 MB. Partition table redesigned: factory app ≤ 3.5 MB, inte
 
 ---
 
-## 11. Display Orientation — OPEN INVESTIGATION (handoff, 2026-06-05)
+## 11. Display Orientation — SOLVED (2026-06-06)
 
-**Status: UNSOLVED. The display is currently mis-rendering.** Goal: run the ILI9341 in
+**Status: SOLVED.** Working config documented below and in README.md §Screen Orientation.
+Goal was to run the ILI9341 in
 **landscape 320×240, USB on the left, readable (non-mirrored) text, full-screen fill,
 correct colours.** A four-quadrant test pattern is gated behind `ORIENTATION_TEST` in
 [main/app_config.h](main/app_config.h) (set to `1` = test screen, `0` = normal UI). The
 test pattern lives in [main/main.c](main/main.c) around the `#if ORIENTATION_TEST` block
 (`MK_Q` macro draws RED top-left, GREEN top-right, BLUE bottom-left, YELLOW bottom-right,
 plus a "v USB v" label).
+
+### SOLUTION (confirmed working on hardware 2026-06-06)
+
+- `LCD_H_RES=320, LCD_V_RES=240` — panel is physically landscape-native (320 col × 240 row)
+- `LCD_MADCTL=0x40` — MX bit (mirror column scan), no MV, BGR bit clear
+- `rgb_ele_order=LCD_RGB_ELEMENT_ORDER_RGB` + `lv_draw_sw_rgb565_swap()` in flush
+- Write full MADCTL byte via `esp_lcd_panel_io_tx_param(io, 0x36, {0x40}, 1)` **before** GRAM clear
+- No `esp_lcd_panel_swap_xy()` / `mirror()` — they only OR individual bits onto stale init state
+- No LVGL software rotation — not needed
 
 ### Ground truth from the working TZT reference demos (verified, trust these)
 Source: `/home/benbrandwood/Documents/dev/TZT/2.4inch_ESP32-2432S024-jyc/1-Demo/Demo_Arduino/`

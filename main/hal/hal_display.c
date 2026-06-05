@@ -153,13 +153,8 @@ void hal_display_init(void)
              rddid[0], rddid[1], rddid[2], rddid[3], (int)id_errRDD);
     /* Expected for ILI9341: 0xD3 → XX 00 93 41  */
 
-    /* Clear the full native GRAM (240 col × 320 row) before changing orientation
-     * so no stale content from a prior firmware bleeds through. */
-    static uint16_t s_clear_line[LCD_NATIVE_W];
-    memset(s_clear_line, 0x00, sizeof(s_clear_line));
-    for (int row = 0; row < LCD_NATIVE_H; row++) {
-        esp_lcd_panel_draw_bitmap(s_panel, 0, row, LCD_NATIVE_W, row + 1, s_clear_line);
-    }
+    /* Write MADCTL FIRST so the GRAM clear runs in the correct scan direction.
+     * If clear runs before MADCTL is set, stale landscape GRAM bleeds through. */
 
     /* Write the full MADCTL register (0x36) in one shot.
      * This overwrites ALL bits including any scan-order bits left by the init
@@ -171,6 +166,14 @@ void hal_display_init(void)
     ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(s_io_handle, 0x36,
                     (uint8_t[]){LCD_MADCTL}, 1));
     ESP_LOGI(TAG, "MADCTL set to 0x%02X", (unsigned)LCD_MADCTL);
+
+    /* Clear the full native GRAM now that MADCTL is set — clears in the
+     * correct scan direction so no stale content bleeds through. */
+    static uint16_t s_clear_line[LCD_NATIVE_W];
+    memset(s_clear_line, 0x00, sizeof(s_clear_line));
+    for (int row = 0; row < LCD_NATIVE_H; row++) {
+        esp_lcd_panel_draw_bitmap(s_panel, 0, row, LCD_NATIVE_W, row + 1, s_clear_line);
+    }
 
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
 
