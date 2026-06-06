@@ -123,7 +123,7 @@
 #define ECG_SAMPLE_PERIOD_MS     (1000 / ECG_SAMPLE_HZ)
 #define ECG_UI_REFRESH_MS        50
 #define ECG_PLOT_W               306   /* ~95 % of 320 landscape width */
-#define ECG_PLOT_H                80   /* chart card height in record screen */
+#define ECG_PLOT_H                70   /* chart height in record screen (320×240 landscape) */
 #define ECG_PLOT_POINTS          ECG_WINDOW_SAMPLES
 
 /* Chart point count actually rendered. LVGL 9.5 chart hangs at 400 points

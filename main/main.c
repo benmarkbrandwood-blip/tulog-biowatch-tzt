@@ -2131,14 +2131,14 @@ static lv_obj_t *rec_make_metric(lv_obj_t *parent, const char *initial,
 /* -------------------------------------------------------------------------- */
 
 /*
- * Layout (410 × 502 px):
- *   y= 10   topbar card  400×70  – RR | HR | SpO2 / BAT | drift
- *   y= 90   plot card    390×130 – thin chart strip
- *   y=232   name label + textarea
- *   y=313   REC/STOP button
- *   y=375   status label
- *   y=404   tab row  6 × 58 px
- *   bottom  hint label
+ * Layout (320 × 240 px):
+ *   y=  4   topbar card  310×44  – RR | HR | SpO2 / BAT | PAT | drift
+ *   y= 49   tab row  6×38 px     – ECG | PPG | RESP | NAS | FCG1 | FCG2
+ *   y= 73   plot card 320×76     – 4 s rolling chart
+ *   y=152   name textarea 280×28 – optional recording label
+ *   y=182   REC/STOP button 280×34
+ *   y=218   status label
+ *   bottom  keyboard (hidden until textarea tapped)
  */
 /*
  * Build the ECG chart inside s_rec_plot_card. Called only AFTER ~800 ms
@@ -2217,16 +2217,9 @@ static void ui_create_record_screen(void)
                                       COLOUR_TEXT);
 
     /* ── Plot strip ──────────────────────────────────────────────── */
-    lv_obj_t *plot_title = lv_label_create(s_scr_record);
-    lv_label_set_text(plot_title, "4 s rolling window");
-    lv_obj_set_style_text_color(plot_title, COLOUR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(plot_title, &lv_font_montserrat_14,
-                                LV_PART_MAIN);
-    lv_obj_set_pos(plot_title, 20, 84);
-
     s_rec_plot_card = lv_obj_create(s_scr_record);
-    lv_obj_set_size(s_rec_plot_card, LCD_H_RES, ECG_PLOT_H + 10);
-    lv_obj_align(s_rec_plot_card, LV_ALIGN_TOP_MID, 0, 52);
+    lv_obj_set_size(s_rec_plot_card, LCD_H_RES, ECG_PLOT_H + 6);
+    lv_obj_align(s_rec_plot_card, LV_ALIGN_TOP_MID, 0, 73);
     style_card(s_rec_plot_card, 0);
     lv_obj_clear_flag(s_rec_plot_card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(s_rec_plot_card, 0, LV_PART_MAIN);
@@ -2236,16 +2229,9 @@ static void ui_create_record_screen(void)
      * during the screen-load animation. */
 
     /* ── Name text-area ──────────────────────────────────────────── */
-    lv_obj_t *name_hint = lv_label_create(s_scr_record);
-    lv_label_set_text(name_hint, "Recording label (optional):");
-    lv_obj_set_style_text_color(name_hint, COLOUR_SUBTEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(name_hint, &lv_font_montserrat_14,
-                                LV_PART_MAIN);
-    lv_obj_set_pos(name_hint, 8, 138);
-
     s_rec_name_ta = lv_textarea_create(s_scr_record);
-    lv_obj_set_size(s_rec_name_ta, 280, 32);
-    lv_obj_set_pos(s_rec_name_ta, 20, 144);
+    lv_obj_set_size(s_rec_name_ta, 280, 28);
+    lv_obj_set_pos(s_rec_name_ta, 20, 152);
     lv_textarea_set_one_line(s_rec_name_ta, true);
     lv_textarea_set_placeholder_text(s_rec_name_ta, "e.g. rest_baseline");
     lv_textarea_set_max_length(s_rec_name_ta, REC_LABEL_MAX - 1);
@@ -2260,8 +2246,8 @@ static void ui_create_record_screen(void)
 
     /* ── REC/STOP button ─────────────────────────────────────────── */
     s_btn_rec_startstop = lv_btn_create(s_scr_record);
-    lv_obj_set_size(s_btn_rec_startstop, 280, 38);
-    lv_obj_set_pos(s_btn_rec_startstop, 20, 180);
+    lv_obj_set_size(s_btn_rec_startstop, 280, 34);
+    lv_obj_set_pos(s_btn_rec_startstop, 20, 182);
     style_button(s_btn_rec_startstop, COLOUR_SURFACE2, COLOUR_SUCCESS);
     lv_obj_add_event_cb(s_btn_rec_startstop, rec_startstop_btn_cb,
                         LV_EVENT_CLICKED, NULL);
@@ -2281,14 +2267,14 @@ static void ui_create_record_screen(void)
                                  LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_rec_status, &lv_font_montserrat_14,
                                 LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_rec_status, 8, 222);
+    lv_obj_set_pos(s_lbl_rec_status, 8, 218);
 
     /* ── Tab row ─────────────────────────────────────────────────── */
-    int tab_w = 38, gap = 4, start_x = 20, tab_y = 42;
+    int tab_w = 38, gap = 4, start_x = 20, tab_y = 49;
     for (int i = 0; i < REC_TAB_COUNT; i++) {
         lv_obj_t *btn = lv_btn_create(s_scr_record);
         s_rec_tab_btns[i] = btn;
-        lv_obj_set_size(btn, tab_w, 24);
+        lv_obj_set_size(btn, tab_w, 22);
         lv_obj_set_pos(btn, start_x + i*(tab_w+gap), tab_y);
         style_button(btn, COLOUR_SURFACE2, COLOUR_MUTEDTAB);
 
@@ -2747,7 +2733,7 @@ static void bp_build_chart(void)
     if (s_bp_chart || !s_bp_chart_card) return;
 
     s_bp_chart = lv_chart_create(s_bp_chart_card);
-    lv_obj_set_size(s_bp_chart, LCD_H_RES, 100);
+    lv_obj_set_size(s_bp_chart, LCD_H_RES, 48);
     lv_obj_align(s_bp_chart, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_color(s_bp_chart, COLOUR_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_bp_chart, LV_OPA_COVER, LV_PART_MAIN);
@@ -2950,15 +2936,13 @@ static void bp_ui_timer_cb(lv_timer_t *timer)
 
 /* ========================================================================== */
 /* Files screen                                                               */
-/* Layout (410 × 502 px):                                                     */
+/* Layout (320 × 240 px):                                                     */
 /*   y= 12   Title "Files"                                                    */
-/*   y= 44   Status label (SD / Wi-Fi state, selected file)                  */
-/*   y= 70   [Refresh 185 × 44]  [Connect WiFi 185 × 44]                    */
-/*   y=120   [Send    185 × 44]  [Delete      185 × 44]                     */
-/*   y=172   Scrollable file list (378 × 222)                                */
-/*   y=402   Transfer status label                                            */
-/*   y=424   Transfer detail label (progress bytes)                           */
-/*   y=480   Bottom hint                                                      */
+/*   y= 38   Status label (SD / Wi-Fi state, selected file)                  */
+/*   y= 54   [Refresh 148×36]  [Connect WiFi 106×36]                        */
+/*   y= 96   [Send 106×36]  [Delete 106×36]                                 */
+/*   y=136   Scrollable file list (296×74)                                   */
+/*   bottom  Transfer progress / filename labels                              */
 /* ========================================================================== */
 
 static void files_rebuild_list(void);
@@ -3296,8 +3280,8 @@ static void ui_create_files_screen(void)
 
     /* ── File list container (scrollable) ───────────────────────── */
     s_files_list_cont = lv_obj_create(s_scr_files);
-    lv_obj_set_size(s_files_list_cont, 296, 116);
-    lv_obj_align(s_files_list_cont, LV_ALIGN_TOP_MID, 0, 142);
+    lv_obj_set_size(s_files_list_cont, 296, 74);
+    lv_obj_align(s_files_list_cont, LV_ALIGN_TOP_MID, 0, 136);
     lv_obj_set_style_bg_color(s_files_list_cont, COLOUR_SURFACE, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_files_list_cont, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_color(s_files_list_cont, COLOUR_SUBTEXT, LV_PART_MAIN);
@@ -3324,20 +3308,13 @@ static void ui_create_files_screen(void)
     lv_label_set_text(s_lbl_files_xfer, "");
     lv_obj_set_style_text_color(s_lbl_files_xfer, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_files_xfer, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_files_xfer, 8, 262);
+    lv_obj_align(s_lbl_files_xfer, LV_ALIGN_BOTTOM_MID, 0, -22);
 
     s_lbl_files_detail = lv_label_create(s_scr_files);
     lv_label_set_text(s_lbl_files_detail, "");
     lv_obj_set_style_text_color(s_lbl_files_detail, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_files_detail, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_files_detail, 8, 220);
-
-    /* ── Bottom hint ────────────────────────────────────────────── */
-    lv_obj_t *hint = lv_label_create(s_scr_files);
-    lv_label_set_text(hint, "BOOT: Home");
-    lv_obj_set_style_text_color(hint, COLOUR_SUBTEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);
+    lv_obj_align(s_lbl_files_detail, LV_ALIGN_BOTTOM_MID, 0, -6);
 
     /* ── UI timer (250 ms) ──────────────────────────────────────── */
     if (!s_files_ui_timer)
@@ -3345,15 +3322,14 @@ static void ui_create_files_screen(void)
 }
 
 /*
- * Layout (410 × 502 px):
- *   y= 10   Title
- *   y= 42   Status label
- *   y= 68   Duration buttons (3 × 110 px)
- *   y=140   Countdown (large, hidden unless recording)
- *   y=210   START/STOP button
- *   y=280   Results card (400 × 80)
- *   y=374   Chart card (410 × 100)
- *   y=484   Bottom hint
+ * Layout (320 × 240 px):
+ *   y= 12   Title
+ *   y= 36   Status label
+ *   y= 56   Duration buttons (3 × 86 px) / Countdown (hidden/shown)
+ *   y= 88   START/STOP button 290×40
+ *   y=130   Results card 290×52
+ *   y=184   Chart card 320×52 (lazy — built after analysis)
+ *   bottom  hint
  */
 static void ui_create_bp_screen(void)
 {
@@ -3420,8 +3396,8 @@ static void ui_create_bp_screen(void)
 
     /* ── Results card ───────────────────────────────────────────── */
     lv_obj_t *res_card = lv_obj_create(s_scr_bp);
-    lv_obj_set_size(res_card, 290, 60);
-    lv_obj_align(res_card, LV_ALIGN_TOP_MID, 0, 156);
+    lv_obj_set_size(res_card, 290, 52);
+    lv_obj_align(res_card, LV_ALIGN_TOP_MID, 0, 130);
     style_card(res_card, 12);
     lv_obj_clear_flag(res_card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -3430,19 +3406,19 @@ static void ui_create_bp_screen(void)
     lv_obj_set_style_text_color(s_lbl_bp_hrv, COLOUR_ECG, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_bp_hrv, &lv_font_montserrat_14,
                                 LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_bp_hrv, 10, 8);
+    lv_obj_set_pos(s_lbl_bp_hrv, 10, 6);
 
     s_lbl_bp_pat_stat = lv_label_create(res_card);
     lv_label_set_text(s_lbl_bp_pat_stat, "PAT: --   var: --");
     lv_obj_set_style_text_color(s_lbl_bp_pat_stat, COLOUR_PPG, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_bp_pat_stat, &lv_font_montserrat_14,
                                 LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_bp_pat_stat, 10, 36);
+    lv_obj_set_pos(s_lbl_bp_pat_stat, 10, 28);
 
     /* ── Chart card (chart built lazily after analysis) ─────────── */
     s_bp_chart_card = lv_obj_create(s_scr_bp);
-    lv_obj_set_size(s_bp_chart_card, LCD_H_RES, 72);
-    lv_obj_align(s_bp_chart_card, LV_ALIGN_TOP_MID, 0, 168);
+    lv_obj_set_size(s_bp_chart_card, LCD_H_RES, 52);
+    lv_obj_align(s_bp_chart_card, LV_ALIGN_TOP_MID, 0, 184);
     style_card(s_bp_chart_card, 0);
     lv_obj_clear_flag(s_bp_chart_card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(s_bp_chart_card, 0, LV_PART_MAIN);
