@@ -901,6 +901,32 @@ Steps 7–11 implemented and hardware-validated:
 
 ---
 
+### Phase 4.5 — COMPLETE (2026-06-06) — branch touchscreen-solve
+
+**Touch driver: XPT2046 SPI (resistive), Z-pressure detection.**
+
+The board is the **resistive touch variant** (XPT2046 SPI), not the capacitive
+variant (CST820 I²C). CST820 was never present — I²C at 0x15 returned TIMEOUT on
+every poll. XPT2046 sits on SPI2 (shared with display), CS=GPIO33.
+
+**Root cause of previous failure:** driver gated touch on `gpio_get_level(GPIO36)`.
+The XPT2046 PENIRQ output is **not wired to GPIO36** on this board (LovyanGFX ref
+demo sets `pin_int=-1`). GPIO36 floated high → always RELEASED.
+
+**Fix:** removed IRQ gate; added Z-pressure detection (`Z = 4095 + Z1 - Z2 > 350`).
+
+**Coordinate mapping** (confirmed from hardware corner-touch calibration):
+- `raw_x` (0xD3 cmd, X channel): LEFT=high, RIGHT=low → LVGL X, **inverted**
+- `raw_y` (0x93 cmd, Y channel): TOP=high, BOTTOM=low → LVGL Y, **inverted**
+- No X/Y swap needed
+
+**Calibration constants** measured on hardware:
+`XPT_X_MIN=650, XPT_X_MAX=3200, XPT_Y_MIN=650, XPT_Y_MAX=3100`
+
+See `README.md §Touchscreen` and `hal_touch.c` for full detail.
+
+---
+
 ### Phase 5 — NOT STARTED
 
 **UI layout redesign: 240×320 portrait → 320×240 landscape**
@@ -919,7 +945,5 @@ All UI screens in `main.c` were designed for the Waveshare source board (410×50
 - Home clock screen — recentre and resize for 320 wide
 
 **Approach:** Work screen-by-screen, starting with the home clock (simplest) and record screen (most used). `ORIENTATION_TEST` flag in `app_config.h` can be kept as a regression check.
-
-**Touch calibration:** CST820 reports native portrait coords (x: 0–240, y: 0–320). With no LVGL software rotation, the touch driver now needs to map portrait-native coords to the 320×240 logical surface. In `hal_touch.c` `cst820_read_cb`: swap x/y and mirror as needed to match `LCD_MADCTL=0x40` (MX = col mirrored, no row/col swap). Verify by tapping known on-screen targets after each screen is laid out.
 
 *End of migration plan.*

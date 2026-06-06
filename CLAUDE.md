@@ -200,7 +200,7 @@ idf.py fullclean && idf.py build
 | [main/app_state.h](main/app_state.h) | Shared structs: `rec_row_t`, `bp_row_t` (rr_us/pat_us in µs), `bp_analysis_t`, `rec_tab_t`, `health_tab_t` |
 | [main/hal/hal_backlight.c](main/hal/hal_backlight.c) | LEDC PWM backlight on GPIO27 |
 | [main/hal/hal_display.c](main/hal/hal_display.c) | ILI9341 SPI2, LVGL 9.5 init, async DMA flush, FreeRTOS mutex, `hal_display_lock()` |
-| [main/hal/hal_touch.c](main/hal/hal_touch.c) | CST820 I2C0 driver, reset sequence, LVGL indev registration |
+| [main/hal/hal_touch.c](main/hal/hal_touch.c) | XPT2046 SPI2 driver, Z-pressure touch detection, LVGL indev registration |
 | [main/hal/hal_battery.c](main/hal/hal_battery.c) | IP5306 stub — `battery_read_voltage()` = -1.0f, `battery_read_percent()` = -1 permanently |
 | [main/hal/hal_storage.c](main/hal/hal_storage.c) | SD card via `sdspi_host` (SPI3/VSPI) with 5-retry mount loop |
 | [main/services/svc_record.c](main/services/svc_record.c) | FreeRTOS queue → SD writer task; Record screen CSV lifecycle |
@@ -252,7 +252,8 @@ Source board had 32 MB. Partition table redesigned: factory app ≤ 3.5 MB, inte
 
 | Issue | Location | Notes |
 |---|---|---|
-| UI layout not redesigned for 240×320 | All UI files in main.c | Source UI was 410×502; widgets are scaled but not properly laid out for portrait 240×320 |
+| UI layout partially redesigned for 320×240 landscape | main.c | Home screen done; record/wifi/bp/settings partially done; further layout work needed |
+| **Touch coordinate calibration not yet verified on hardware** | `hal_touch.c` | XPT2046 Z-pressure detection is now the gate (fixed). Calibration constants XPT_X/Y_MIN/MAX and the swap/mirror mapping need hardware verification using the `ESP_LOGI("Touch", "z=N raw x=N y=N")` log output. See §10 for calibration instructions. |
 | `spo2` field always 0 | `ecg_sampler_task` in main.c | No optical sensor integrated |
 | PPG/NAS/FCG recorded as sine waves | `ecg_sampler_task` in main.c | Placeholder until real sensors added |
 | Drain path in `sd_writer_task` missing `hr_bpm` | svc_record.c | `snprintf` in drain loop has 11 format args, CSV header has 12 columns |
@@ -272,6 +273,8 @@ Source board had 32 MB. Partition table redesigned: factory app ≤ 3.5 MB, inte
 - **BP screen uses µs for RR and PAT.** `bp_row_t.rr_us` and `bp_row_t.pat_us` are `int32_t` microseconds. `rec_row_t.rr_ms` / `pat_ms` are `int16_t` milliseconds — do not conflate the two.
 - **LVGL must always be called under `hal_display_lock()`** from tasks other than the LVGL port task.
 - **The spinlock (`s_ecg_spinlock`) is a portMUX**, not a FreeRTOS mutex — use `portENTER_CRITICAL` / `portEXIT_CRITICAL`.
+- **Touch driver: XPT2046 SPI on SPI2, Z-pressure detection.** CS=GPIO33, shared with display. PENIRQ (GPIO36) is NOT connected on this board — the LovyanGFX reference demo for the 2432S024 explicitly sets `pin_int=-1`. Touch detection uses `Z = 4095 + Z1 - Z2 > 350`. Do NOT use GPIO36 as an IRQ gate or attempt CST820 I2C.
+- **Touch calibration**: flash and hold finger on each corner while watching serial. The log line is `I Touch: z=N raw x=N y=N`. Update `XPT_X_MIN/MAX` and `XPT_Y_MIN/MAX` in [main/hal/hal_touch.c](main/hal/hal_touch.c) with the observed min/max raw values. If axes or mirrors are wrong, follow the swap/invert comment in `xpt2046_read_cb`.
 - **Read code before making architectural claims.** Verify sensor integration by looking at actual driver files, not docs.
 - **Keep diffs small.** Prefer extracting one module at a time.
 - **Check migration_plan.md** before proposing structural changes.
@@ -427,3 +430,29 @@ without PSRAM). So rotation must be done by hand in `flush_cb`.
 **Reference ground truth still stands:** panel native 240×320, RGB+byteswap = correct colour,
 TFT_eSPI rotation 3 = USB-left. The colour half of the problem is SOLVED; only the geometry
 (rotation placement + mirror) remains.
+
+---
+
+## 12. ESP32-2432S028 (2.8″ board) — FUTURE WORK
+
+The 2432S028 was briefly tested but is NOT the target board. Notes for future reference:
+
+**What was tried (2026-06-06):**
+- Flashed the 2.4″ firmware (MADCTL=0x40, 320×240) → "brief flash then nothing" — LVGL at 320×240 writes CASET 0..319 but the 2.8″ panel has only 240 native columns → content goes out of range
+- Flashed with MADCTL=0x00, 240×320 (portrait) → "brief flash then nothing" still — hardware init runs cleanly but display stays dark
+- Both builds boot fully (SD, WiFi, LVGL task all start), no crashes, touch also gives `err=264` on I2C (same as 2.4″ board — no CST820)
+
+**Most likely cause of blank display:**
+- The 2432S028 forum code (CYD / Cheap Yellow Display) uses `#define ST7789_DRIVER` — the 2.8″ panel is almost certainly **ST7789**, not ILI9341
+- Sending ILI9341-specific vendor init commands to an ST7789 causes partial init; the panel powers up briefly then is in undefined state
+- Fix: detect or assume ST7789, switch to `esp_lcd_new_panel_st7789` driver from ESP-IDF built-in components
+
+**Touch on 2432S028:**
+- Same XPT2046 resistive SPI (CS=GPIO33, IRQ=GPIO36) as the 2.4″ resistive variant
+- No CST820 I2C on either board variant tested
+
+**To support the 2.8″ board in future:**
+1. Add `#if BOARD_2432S028` / `#if BOARD_2432S024R` compile-time selection
+2. Replace `esp_lcd_new_panel_ili9341` → `esp_lcd_new_panel_st7789` for the 2.8″ path
+3. Adjust MADCTL orientation for ST7789 (different rotation values than ILI9341)
+4. XPT2046 touch driver (being written for 2.4″ board — reuse directly)

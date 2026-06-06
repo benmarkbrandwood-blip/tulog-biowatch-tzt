@@ -381,6 +381,84 @@ BGR bit (`0x08`) must stay **clear** — RGB element order is confirmed correct.
 
 ---
 
+## Touchscreen — XPT2046 Resistive on TZT ESP32-2432S024C
+
+This section documents the confirmed-working touch configuration for the TZT board.
+
+### Board variant
+
+The TZT 2432S024 ships in two hardware variants. The board used here is the
+**resistive touch variant**, which has an **XPT2046 SPI controller** — NOT the
+capacitive CST820 I²C controller. The tell is `err=264` (I²C TIMEOUT) on every
+poll at address 0x15; there is no CST820 on this board.
+
+| Variant | Touch IC | Touch bus | Backlight GPIO |
+|---|---|---|---|
+| Resistive (this board) | XPT2046 | SPI2 shared with display, CS=GPIO33 | GPIO27 |
+| Capacitive | CST820 | I²C0 SDA=GPIO33, SCL=GPIO32 | GPIO27 |
+
+### PENIRQ is not connected
+
+The XPT2046 PENIRQ (pen-down interrupt) output is **not routed to the ESP32** on
+this board variant. The LovyanGFX reference demo for the 2432S024 resistive variant
+explicitly sets `pin_int = -1`. GPIO36 floats and must not be used as a touch gate.
+
+**Touch detection uses Z-pressure measurement only:**
+
+```
+Z = 4095 + Z1 - Z2          (Z1 from cmd 0xB3, Z2 from cmd 0xC3)
+Threshold: Z > 350           (matching TFT_eSPI default)
+```
+
+When not touching, Z1≈0 and Z2≈0, giving Z≈4095 which the driver converts to 0.
+
+### SPI configuration
+
+XPT2046 shares the SPI2 (HSPI) bus with the ILI9341 display. Must be added to the
+bus **after** `hal_display_init()`.
+
+| Parameter | Value |
+|---|---|
+| SPI host | `SPI2_HOST` (shared with display) |
+| CS pin | GPIO33 |
+| Clock | 2 MHz |
+| SPI mode | 0 (CPOL=0, CPHA=0) |
+| IRQ pin | not connected — not used |
+
+### Coordinate mapping
+
+Confirmed from hardware corner-touch calibration (2026-06-06):
+
+| XPT2046 channel | Command | Physical direction | LVGL axis |
+|---|---|---|---|
+| X channel (0xD3) | `raw_x` | LEFT=high (≈2920), RIGHT=low (≈860) | Inverted → LVGL X |
+| Y channel (0x93) | `raw_y` | TOP=high (≈2793), BOTTOM=low (≈920) | Inverted → LVGL Y |
+
+No X/Y axis swap is needed. Both axes are inverted.
+
+```c
+lx = (LCD_H_RES - 1) - xpt_map(raw_x, XPT_X_MIN, XPT_X_MAX, LCD_H_RES - 1);
+ly = (LCD_V_RES - 1) - xpt_map(raw_y, XPT_Y_MIN, XPT_Y_MAX, LCD_V_RES - 1);
+```
+
+### Calibration constants
+
+Values measured from corner touches on this board (see `hal_touch.c`):
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `XPT_X_MIN` | 650 | raw_x at right screen edge |
+| `XPT_X_MAX` | 3200 | raw_x at left screen edge |
+| `XPT_Y_MIN` | 650 | raw_y at bottom screen edge |
+| `XPT_Y_MAX` | 3100 | raw_y at top screen edge |
+| `XPT_Z_THRESHOLD` | 350 | minimum Z pressure to register touch |
+
+To recalibrate: flash the firmware and watch the serial log
+(`I Touch: z=NNN raw x=NNN y=NNN`) while pressing each screen edge.
+Update the constants in [main/hal/hal_touch.c](main/hal/hal_touch.c).
+
+---
+
 ## Licence
 
 MIT — free to use, modify, and distribute.
