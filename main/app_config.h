@@ -24,7 +24,7 @@
 
 /* Set to 1 to boot into the orientation test screen (four coloured quadrants).
  * Set to 0 to run the normal firmware. */
-#define ORIENTATION_TEST        1
+#define ORIENTATION_TEST        0
 
 /* -------------------------------------------------------------------------- */
 /* Pin definitions — TZT ESP32-2432S024C (capacitive touch variant)          */
