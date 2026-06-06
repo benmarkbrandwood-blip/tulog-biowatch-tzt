@@ -196,11 +196,16 @@ static void lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area,
 **Resolution update in `app_config.h`:**
 
 ```c
-#define LCD_H_RES   240
-#define LCD_V_RES   320
+// Confirmed working (Phase 4) — panel is physically landscape-native:
+#define LCD_H_RES   320
+#define LCD_V_RES   240
 ```
 
-Adjust `ECG_PLOT_W` and `ECG_PLOT_H` proportionally (source: 370×250 at 410×502 ≈ 90%×50% → target: ~216×160 at 240×320).
+> **Note:** Earlier drafts of this plan specified 240×320. The actual TZT panel is landscape-native
+> (320 col × 240 row). See Phase 4 in Section 10 and `README.md §Screen Orientation` for the full
+> explanation and working MADCTL configuration.
+
+Adjust `ECG_PLOT_W` and `ECG_PLOT_H` for 320×240 landscape (Phase 5 work).
 
 ### 3.2 Touch — FT3168 BSP → CST820 I2C
 
@@ -764,7 +769,11 @@ The SD SPI pins (GPIO18/19/23/5) are conventional for this ESP32 board family bu
 
 ### 8.10 Display Orientation
 
-The ILI9341 defaults to portrait mode (240 wide × 320 tall). The source LVGL UI was designed for 410×502. All LVGL widget layouts must be redesigned for 240×320. The `ECG_PLOT_W` and `ECG_PLOT_H` values in `app_config.h` must be scaled down (see Section 6, Step 3). LVGL's `lv_obj_align` and `lv_obj_set_size` calls in UI files will need numerical updates.
+**Resolved in Phase 4.** The TZT panel is physically landscape-native (320×240). Do not use
+`esp_lcd_panel_swap_xy` or `esp_lcd_panel_mirror` — they OR individual MADCTL bits and cause shear.
+Write the full MADCTL byte via `esp_lcd_panel_io_tx_param(io, 0x36, {0x40}, 1)` before the GRAM clear.
+Working config: `LCD_H_RES=320, LCD_V_RES=240, LCD_MADCTL=0x40, rgb_ele_order=RGB`.
+UI layout redesign for 320×240 is Phase 5 work (see Section 10).
 
 ---
 
@@ -836,90 +845,105 @@ Steps 4–6 implemented and building clean:
 - `lv_draw_sw_rgb565_swap(buf, px_count)` in flush_cb for ILI9341 byte order
 - IDF 6 I2C: `i2c_new_master_bus()` (not `i2c_master_bus_create()`)
 
-### Phase 3 — NOT STARTED
+### Phase 3 — COMPLETE (2026-06-05) — commit 1dbe823
 
-**Critical schematic finding (confirmed 2026-06-05):**
-Schematic: `2.4inch_ESP32-2432S024-jyc/5-Schematic/SCH_ESP32-2.4TFT_1-ESP32-2.4TFT_2023-12-19.png`
+Steps 7–11 implemented and hardware-validated:
 
-**Battery:**
-- The board uses an **IP5306** boost+charger IC. No I2C lines are visible connecting it to the ESP32.
-- **GPIO35 connects to external expansion connector P3** (alongside GPIO21 and GPIO22) — NOT to any battery sense node.
-- There is no battery voltage path to any ESP32 ADC input on this board.
-- `battery_read_voltage()` and `battery_read_percent()` must permanently return -1 / -1.0f.
-- Do NOT implement ADC on GPIO35. Remove `PIN_BAT_ADC` from app_config.h or mark it unused.
+- **`hal_battery.c/h`** — IP5306 permanent stub confirmed from schematic: no I2C or ADC path to ESP32.
+  `battery_read_voltage()` = -1.0f, `battery_read_percent()` = -1 permanently. GPIO35 routes to
+  expansion connector P3, NOT battery sense — do not implement ADC on GPIO35.
+- **`hal_storage.c`** — `sdspi_host` (SPI3/VSPI) with 5-retry mount loop. Pins confirmed from
+  schematic: CS=GPIO5, CLK=GPIO18, MISO=GPIO19, MOSI=GPIO23.
+- **`svc_bp_record.c`** — `MALLOC_CAP_SPIRAM` → `MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL`;
+  `BP_QUEUE_LEN` 2048→512 for DRAM budget.
+- **`main.c`** — stale BSP comment removed; SD mount comment updated.
 
-**SD card pins (confirmed from TF-CARD schematic section):**
-- CS = GPIO5 (`PIN_SD_CS`), CLK = GPIO18 (`PIN_SD_SCLK`), MISO = GPIO19 (`PIN_SD_MISO`), MOSI = GPIO23 (`PIN_SD_MOSI`)
-- Matches `app_config.h` exactly. Use SPI3_HOST (VSPI).
+**Hardware validated on-device:**
+- Boots to Wi-Fi scan → home clock screen
+- ILI9341 display renders via LVGL 9.5
+- CST820 touch input registered in LVGL
+- Backlight LEDC PWM on GPIO27
+- Wi-Fi scan/connect with auto-retry, NVS credential persistence
+- SNTP sync, NVS time persistence
+- ECG 100 Hz simulation, QRS detection, HR/RR estimates
+- SD card recording (sdspi) to CSV at 100 Hz
+- BP screen: 30/60/120 s, 1 kHz sampler, CSV, HRV RMSSD + PAT analysis
+- Files screen: SD enumeration, HTTP POST upload, deletion
 
-**Step 7 — `hal_battery.c` + `hal_battery.h`:**
-- Strip the `#if 0` AXP2101 dead code block
-- `battery_adc_init()`: log that no hardware sense path exists on this board
-- `battery_read_voltage()`: return -1.0f
-- `battery_read_percent()`: return -1
-- Update `hal_battery.h` comment to describe IP5306 board, no GPIO sense line
+---
 
-**Step 8 — `hal_storage.c`:**
-Replace stub with `sdspi_host` + `esp_vfs_fat_sdspi_mount()`:
+### Phase 4 — COMPLETE (2026-06-06) — branch display-orientation-fix
 
-```c
-#include "esp_vfs_fat.h"
-#include "driver/sdspi_host.h"
-#include "sdmmc_cmd.h"
-#include "driver/spi_master.h"
+**Display orientation — solved after extended investigation.**
 
-static sdmmc_card_t *s_card = NULL;
+> Full investigation log in `CLAUDE.md §11` and `README.md §Screen Orientation`.
 
-esp_err_t hal_storage_mount(void) {
-    if (s_sd_mounted) return ESP_OK;
+**Root cause:** The ILI9341 on the TZT board is physically mounted **landscape-native** (320 columns × 240 rows). Prior attempts used portrait dims (240×320) or hardware `swap_xy` which caused vertical stripe shear — `esp_lcd_panel_swap_xy` sets the MV bit in MADCTL but `draw_bitmap` still sends CASET/RASET in the original axis order, so the pixel stream and GRAM scan direction disagree.
 
-    spi_bus_config_t bus = {
-        .mosi_io_num = PIN_SD_MOSI,
-        .miso_io_num = PIN_SD_MISO,
-        .sclk_io_num = PIN_SD_SCLK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-    };
-    esp_err_t err = spi_bus_initialize(SPI3_HOST, &bus, SPI_DMA_CH_AUTO);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
+**What does NOT work (do not retry):**
+- `esp_lcd_panel_swap_xy(true)` / `mirror()` — shear on this component
+- `MALLOC_CAP_SPIRAM` LVGL rotation buffers — no PSRAM
+- `lv_display_set_rotation()` in PARTIAL mode — requires full-frame buffer (150 KB)
+- `LCD_RGB_ELEMENT_ORDER_BGR` — renders red as blue
 
-    sdspi_device_config_t slot = SDSPI_DEVICE_CONFIG_DEFAULT();
-    slot.host_id  = SPI3_HOST;
-    slot.gpio_cs  = PIN_SD_CS;
+**Working configuration (locked in `app_config.h` + `hal_display.c`):**
 
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    host.slot = SPI3_HOST;
+| Setting | Value |
+|---|---|
+| `LCD_H_RES` | `320` |
+| `LCD_V_RES` | `240` |
+| `LCD_NATIVE_W/H` | `240 / 320` (for GRAM clear loop) |
+| `LCD_MADCTL` | `0x40` (MX bit — mirror column scan; no MV; BGR=0) |
+| `rgb_ele_order` | `LCD_RGB_ELEMENT_ORDER_RGB` |
+| Flush callback | `lv_draw_sw_rgb565_swap()` + `esp_lcd_panel_draw_bitmap()` |
+| Software rotation | None |
+| MADCTL write | Via `esp_lcd_panel_io_tx_param(io, 0x36, {0x40}, 1)` — full byte, before GRAM clear |
 
-    esp_vfs_fat_sdmmc_mount_config_t mount_cfg = {
-        .format_if_mount_failed = false,
-        .max_files = 5,
-        .allocation_unit_size = 16 * 1024,
-    };
+---
 
-    for (int attempt = 1; attempt <= SD_MOUNT_RETRY_MAX; ++attempt) {
-        err = esp_vfs_fat_sdspi_mount(SD_MOUNT_POINT, &host, &slot, &mount_cfg, &s_card);
-        if (err == ESP_OK) { s_sd_mounted = true; return ESP_OK; }
-        if (err == ESP_ERR_INVALID_STATE) { s_sd_mounted = true; return ESP_OK; }
-        ESP_LOGW(TAG, "sdspi mount attempt %d/%d: %s", attempt, SD_MOUNT_RETRY_MAX, esp_err_to_name(err));
-        vTaskDelay(pdMS_TO_TICKS(200));
-    }
-    return err;
-}
-```
+### Phase 4.5 — COMPLETE (2026-06-06) — branch touchscreen-solve
 
-**Step 9 — `svc_bp_record.c` line 170:**
-```c
-// Change:
-s_bp_queue_storage = heap_caps_malloc(BP_QUEUE_LEN * sizeof(bp_row_t), MALLOC_CAP_SPIRAM);
-// To:
-s_bp_queue_storage = heap_caps_malloc(BP_QUEUE_LEN * sizeof(bp_row_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-```
-Also update the log messages: "PSRAM alloc failed" → "DRAM alloc failed", "PSRAM" → "DRAM".
+**Touch driver: XPT2046 SPI (resistive), Z-pressure detection.**
 
-**Step 10 — `main.c` cleanup:**
-- Remove/update the stale comment ~line 362 that mentions BSP_I2C_SCL
-- Update the SD mount comment ~line 3551 (no longer uses BSP)
+The board is the **resistive touch variant** (XPT2046 SPI), not the capacitive
+variant (CST820 I²C). CST820 was never present — I²C at 0x15 returned TIMEOUT on
+every poll. XPT2046 sits on SPI2 (shared with display), CS=GPIO33.
 
-**Step 11 — Build and commit.**
+**Root cause of previous failure:** driver gated touch on `gpio_get_level(GPIO36)`.
+The XPT2046 PENIRQ output is **not wired to GPIO36** on this board (LovyanGFX ref
+demo sets `pin_int=-1`). GPIO36 floated high → always RELEASED.
+
+**Fix:** removed IRQ gate; added Z-pressure detection (`Z = 4095 + Z1 - Z2 > 350`).
+
+**Coordinate mapping** (confirmed from hardware corner-touch calibration):
+- `raw_x` (0xD3 cmd, X channel): LEFT=high, RIGHT=low → LVGL X, **inverted**
+- `raw_y` (0x93 cmd, Y channel): TOP=high, BOTTOM=low → LVGL Y, **inverted**
+- No X/Y swap needed
+
+**Calibration constants** measured on hardware:
+`XPT_X_MIN=650, XPT_X_MAX=3200, XPT_Y_MIN=650, XPT_Y_MAX=3100`
+
+See `README.md §Touchscreen` and `hal_touch.c` for full detail.
+
+---
+
+### Phase 5 — NOT STARTED
+
+**UI layout redesign: 240×320 portrait → 320×240 landscape**
+
+All UI screens in `main.c` were designed for the Waveshare source board (410×502 AMOLED), then scaled to 240×320. They now need reworking for 320×240 landscape.
+
+**Scope:**
+- All `lv_obj_set_size`, `lv_obj_set_pos`, `lv_obj_align`, chart dimensions in `main.c`
+- `ECG_PLOT_W` and `ECG_PLOT_H` in `app_config.h` — currently ~240×320 proportioned
+- Topbar layout (battery, time, HR, SpO₂ labels) — needs horizontal reflow
+- Wi-Fi scan list, connecting screen, password screen — vertical scroll → horizontal
+- Record screen chart (`REC_CHART_POINTS=200`, 4 s window) — chart width increases from ~216 to ~290
+- BP screen — chart, labels, buttons need landscape reflow
+- Files screen — list and send/delete buttons need landscape layout
+- Settings screen — stub, low priority
+- Home clock screen — recentre and resize for 320 wide
+
+**Approach:** Work screen-by-screen, starting with the home clock (simplest) and record screen (most used). `ORIENTATION_TEST` flag in `app_config.h` can be kept as a regression check.
 
 *End of migration plan.*

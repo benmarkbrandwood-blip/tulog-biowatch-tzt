@@ -3,11 +3,28 @@
 #include "driver/gpio.h"
 
 /* -------------------------------------------------------------------------- */
-/* Display — ILI9341 SPI TFT 240×320                                         */
+/* Display — ILI9341 SPI TFT, native 240×320, run in landscape 320×240        */
+/* Orientation set by writing a full MADCTL byte (0x36) directly after init.  */
 /* -------------------------------------------------------------------------- */
 
-#define LCD_H_RES               240
-#define LCD_V_RES               320
+/* Landscape 320×240 for 2432S024 (2.4" board). MADCTL=0x40 confirmed working. */
+#define LCD_H_RES               320
+#define LCD_V_RES               240
+
+/* Physical panel GRAM dimensions (same as above in portrait). */
+#define LCD_NATIVE_W            240
+#define LCD_NATIVE_H            320
+
+/* MADCTL written to register 0x36 after panel init.  No MV bit — native
+ * portrait addressing so LVGL row-major pixel stream matches GRAM layout.
+ * BGR bit (0x08) CLEAR — RGB + byte-swap confirmed correct.
+ *   0x00 = native portrait (row top→bottom, col left→right)
+ *   0x40 = MX — mirrors left/right (try if image appears horizontally flipped) */
+#define LCD_MADCTL              0x40
+
+/* Set to 1 to boot into the orientation test screen (four coloured quadrants).
+ * Set to 0 to run the normal firmware. */
+#define ORIENTATION_TEST        0
 
 /* -------------------------------------------------------------------------- */
 /* Pin definitions — TZT ESP32-2432S024C (capacitive touch variant)          */
@@ -28,11 +45,8 @@
 /* Backlight — LEDC PWM (capacitive variant) */
 #define PIN_LCD_BL     GPIO_NUM_27
 
-/* Touch — CST820 I2C */
-#define PIN_TP_SDA     GPIO_NUM_33
-#define PIN_TP_SCL     GPIO_NUM_32
-#define PIN_TP_RST     GPIO_NUM_25
-#define PIN_TP_INT     GPIO_NUM_21   /* interrupt input — NOT backlight */
+/* Touch — XPT2046 resistive, SPI2 (shared with display).
+ * The 2432S024 board is the resistive variant; GPIO33 is SPI CS, not I2C SDA. */
 
 /* GPIO35 routes to external expansion connector P3, NOT to a battery sense
  * node.  The IP5306 charger IC has no I2C path to the ESP32 on this board.
@@ -47,6 +61,13 @@
 
 /* SD card VFS mount point */
 #define SD_MOUNT_POINT "/sdcard"
+
+/* XPT2046 resistive touch — SPI2 (shared with display), CS=GPIO33.
+ * The 2432S024 board is the resistive variant (XPT2046 SPI), NOT CST820 I2C.
+ * GPIO33 is NOT I2C SDA on this board; it is the touch SPI CS.
+ * PENIRQ (GPIO36) is NOT connected to the ESP32 on this board variant —
+ * touch detection uses Z-pressure measurement only. */
+#define PIN_TP_CS      GPIO_NUM_33   /* XPT2046 chip-select (active-low) */
 
 /* -------------------------------------------------------------------------- */
 /* WiFi / network                                                             */
@@ -101,8 +122,8 @@
 #define ECG_WINDOW_SAMPLES       (ECG_SAMPLE_HZ * ECG_WINDOW_SECONDS)
 #define ECG_SAMPLE_PERIOD_MS     (1000 / ECG_SAMPLE_HZ)
 #define ECG_UI_REFRESH_MS        50
-#define ECG_PLOT_W               216   /* scaled from 370/410 * 240 */
-#define ECG_PLOT_H               157   /* scaled from 250/502 * 320 */
+#define ECG_PLOT_W               306   /* ~95 % of 320 landscape width */
+#define ECG_PLOT_H                70   /* chart height in record screen (320×240 landscape) */
 #define ECG_PLOT_POINTS          ECG_WINDOW_SAMPLES
 
 /* Chart point count actually rendered. LVGL 9.5 chart hangs at 400 points

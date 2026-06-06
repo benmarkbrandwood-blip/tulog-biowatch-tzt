@@ -21,10 +21,20 @@
       "Read(//root/**)",
       "Read(//opt/**)",
       "Bash(/home/benbrandwood/.espressif/tools/xtensa-esp-elf/esp-15.2.0_20251204/xtensa-esp-elf/bin/xtensa-esp-elf-size /home/benbrandwood/Documents/dev/tulog-biowatch/build/sample_project.elf)",
-      "Bash(ip addr *)"
+      "Bash(ip addr *)",
+      "Bash(idf.py -p /dev/ttyACM0 flash)",
+      "Bash(ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null)",
+      "Read(//dev/**)",
+      "Bash(bash -c '. /home/benbrandwood/.espressif/v6.0.1/esp-idf/export.sh > /dev/null 2>&1 && echo $PATH')",
+      "Bash(IDF_PATH=/home/benbrandwood/.espressif/v6.0.1/esp-idf PATH=/home/benbrandwood/.espressif/v6.0.1/esp-idf/tools:/home/benbrandwood/.espressif/python_env/idf6.0_py3.10_env/bin:__TRACKED_VAR__ idf.py --version)",
+      "Bash(IDF_PATH=/home/benbrandwood/.espressif/v6.0.1/esp-idf IDF_PYTHON_ENV_PATH=/home/benbrandwood/.espressif/python_env/idf6.0_py3.10_env ESP_IDF_VERSION=6.0.1 PATH=/home/benbrandwood/.espressif/v6.0.1/esp-idf/tools:/home/benbrandwood/.espressif/python_env/idf6.0_py3.10_env/bin:__TRACKED_VAR__ idf.py --version)",
+      "Bash(ls /usr/lib/udev/rules.d/ | grep -i brl && grep -i \"1a86\" /usr/lib/udev/rules.d/*brltty* 2>/dev/null | head -5)",
+      "Read(//usr/lib/udev/rules.d/**)",
+      "Bash(idf.py -p /dev/ttyUSB0 flash)"
     ],
     "additionalDirectories": [
-      "/home/benbrandwood/Documents/dev/tulog-PC/pc_receiver"
+      "/home/benbrandwood/Documents/dev/tulog-PC/pc_receiver",
+      "/home/benbrandwood/.claude"
     ]
   }
 }

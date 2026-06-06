@@ -491,9 +491,9 @@ static void nav_to_settings_locked(void *ctx)
 {
     (void)ctx;
 #if LVGL_VERSION_MAJOR >= 9
-    lv_screen_load_anim(s_scr_settings, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 240, 0, false);
+    lv_screen_load_anim(s_scr_settings, LV_SCR_LOAD_ANIM_FADE_IN, 240, 0, false);
 #else
-    lv_scr_load_anim(s_scr_settings, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 240, 0, false);
+    lv_scr_load_anim(s_scr_settings, LV_SCR_LOAD_ANIM_FADE_IN, 240, 0, false);
 #endif
 }
 
@@ -501,9 +501,9 @@ static void nav_to_wifi_locked(void *ctx)
 {
     (void)ctx;
 #if LVGL_VERSION_MAJOR >= 9
-    lv_screen_load_anim(s_scr_wifi, LV_SCR_LOAD_ANIM_MOVE_LEFT, 240, 0, false);
+    lv_screen_load_anim(s_scr_wifi, LV_SCR_LOAD_ANIM_FADE_IN, 240, 0, false);
 #else
-    lv_scr_load_anim(s_scr_wifi, LV_SCR_LOAD_ANIM_MOVE_LEFT, 240, 0, false);
+    lv_scr_load_anim(s_scr_wifi, LV_SCR_LOAD_ANIM_FADE_IN, 240, 0, false);
 #endif
 }
 
@@ -511,9 +511,9 @@ static void nav_to_files_locked(void *ctx)
 {
     (void)ctx;
 #if LVGL_VERSION_MAJOR >= 9
-    lv_screen_load_anim(s_scr_files, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 240, 0, false);
+    lv_screen_load_anim(s_scr_files, LV_SCR_LOAD_ANIM_FADE_IN, 240, 0, false);
 #else
-    lv_scr_load_anim(s_scr_files, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 240, 0, false);
+    lv_scr_load_anim(s_scr_files, LV_SCR_LOAD_ANIM_FADE_IN, 240, 0, false);
 #endif
 }
 
@@ -521,9 +521,9 @@ static void nav_to_pass_locked(void *ctx)
 {
     (void)ctx;
 #if LVGL_VERSION_MAJOR >= 9
-    lv_screen_load_anim(s_scr_pass, LV_SCR_LOAD_ANIM_MOVE_LEFT, 240, 0, false);
+    lv_screen_load_anim(s_scr_pass, LV_SCR_LOAD_ANIM_FADE_IN, 240, 0, false);
 #else
-    lv_scr_load_anim(s_scr_pass, LV_SCR_LOAD_ANIM_MOVE_LEFT, 240, 0, false);
+    lv_scr_load_anim(s_scr_pass, LV_SCR_LOAD_ANIM_FADE_IN, 240, 0, false);
 #endif
 }
 
@@ -547,8 +547,8 @@ static void app_back_btn_cb(lv_event_t *e)
 static void add_back_button(lv_obj_t *scr)
 {
     lv_obj_t *btn = lv_btn_create(scr);
-    lv_obj_set_size(btn, 110, 40);
-    lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -10, 10);
+    lv_obj_set_size(btn, 90, 36);
+    lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -8, 8);
     style_button(btn, COLOUR_SURFACE2, COLOUR_SUBTEXT);
 
     lv_obj_t *lbl = lv_label_create(btn);
@@ -597,7 +597,7 @@ static void show_popup_internal(const char *title, const char *msg, lv_color_t a
     lv_obj_set_style_bg_opa(s_popup, LV_OPA_50, LV_PART_MAIN);
 
     lv_obj_t *panel = lv_obj_create(s_popup);
-    lv_obj_set_size(panel, 330, 160);
+    lv_obj_set_size(panel, 260, 130);
     lv_obj_center(panel);
     lv_obj_set_style_bg_color(panel, COLOUR_SURFACE, LV_PART_MAIN);
     lv_obj_set_style_border_color(panel, accent, LV_PART_MAIN);
@@ -612,7 +612,7 @@ static void show_popup_internal(const char *title, const char *msg, lv_color_t a
 
     lv_obj_t *body = lv_label_create(panel);
     lv_label_set_text(body, msg);
-    lv_obj_set_width(body, 280);
+    lv_obj_set_width(body, 175);
     lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(body, COLOUR_TEXT, LV_PART_MAIN);
@@ -2131,14 +2131,14 @@ static lv_obj_t *rec_make_metric(lv_obj_t *parent, const char *initial,
 /* -------------------------------------------------------------------------- */
 
 /*
- * Layout (410 × 502 px):
- *   y= 10   topbar card  400×70  – RR | HR | SpO2 / BAT | drift
- *   y= 90   plot card    390×130 – thin chart strip
- *   y=232   name label + textarea
- *   y=313   REC/STOP button
- *   y=375   status label
- *   y=404   tab row  6 × 58 px
- *   bottom  hint label
+ * Layout (320 × 240 px):
+ *   y=  4   topbar card  310×44  – RR | HR | SpO2 / BAT | PAT | drift
+ *   y= 49   tab row  6×38 px     – ECG | PPG | RESP | NAS | FCG1 | FCG2
+ *   y= 73   plot card 320×76     – 4 s rolling chart
+ *   y=152   name textarea 280×28 – optional recording label
+ *   y=182   REC/STOP button 280×34
+ *   y=218   status label
+ *   bottom  keyboard (hidden until textarea tapped)
  */
 /*
  * Build the ECG chart inside s_rec_plot_card. Called only AFTER ~800 ms
@@ -2152,7 +2152,7 @@ static void rec_build_chart(void)
     if (s_rec_plot || !s_rec_plot_card) return;
 
     s_rec_plot = lv_chart_create(s_rec_plot_card);
-    lv_obj_set_size(s_rec_plot, LCD_H_RES, 130);
+    lv_obj_set_size(s_rec_plot, LCD_H_RES, ECG_PLOT_H);
     lv_obj_align(s_rec_plot, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_color(s_rec_plot, COLOUR_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_rec_plot, LV_OPA_COVER, LV_PART_MAIN);
@@ -2198,35 +2198,28 @@ static void ui_create_record_screen(void)
 
     /* ── Top bar ─────────────────────────────────────────────────── */
     s_rec_topbar = lv_obj_create(s_scr_record);
-    lv_obj_set_size(s_rec_topbar, 400, 70);
-    lv_obj_align(s_rec_topbar, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_set_size(s_rec_topbar, LCD_H_RES - 10, 44);
+    lv_obj_align(s_rec_topbar, LV_ALIGN_TOP_MID, 0, 4);
     style_card(s_rec_topbar, 14);
     lv_obj_clear_flag(s_rec_topbar, LV_OBJ_FLAG_SCROLLABLE);
 
-    s_lbl_rec_rr   = rec_make_metric(s_rec_topbar, "RR -- bpm",  8,  6,
+    s_lbl_rec_rr   = rec_make_metric(s_rec_topbar, "RR -- bpm",  4,  3,
                                       COLOUR_ECG);
-    s_lbl_rec_hr   = rec_make_metric(s_rec_topbar, "HR --",    130,  6,
+    s_lbl_rec_hr   = rec_make_metric(s_rec_topbar, "HR --",    78,  3,
                                       COLOUR_PPG);
-    s_lbl_rec_spo2 = rec_make_metric(s_rec_topbar, "SpO2 --%", 240,  6,
+    s_lbl_rec_spo2 = rec_make_metric(s_rec_topbar, "SpO2 --%", 152,  3,
                                       COLOUR_ACCENT);
-    s_lbl_rec_batt = rec_make_metric(s_rec_topbar, "BAT --%",    8, 40,
+    s_lbl_rec_batt = rec_make_metric(s_rec_topbar, "BAT --%",    4, 24,
                                       COLOUR_SUCCESS);
-    s_lbl_rec_pat  = rec_make_metric(s_rec_topbar, "PAT --",   130, 40,
+    s_lbl_rec_pat  = rec_make_metric(s_rec_topbar, "PAT --",   78, 24,
                                       COLOUR_PPG);
-    s_lbl_rec_sd   = rec_make_metric(s_rec_topbar, "SD 0 ms",  240, 40,
+    s_lbl_rec_sd   = rec_make_metric(s_rec_topbar, "SD 0 ms",  152, 24,
                                       COLOUR_TEXT);
 
     /* ── Plot strip ──────────────────────────────────────────────── */
-    lv_obj_t *plot_title = lv_label_create(s_scr_record);
-    lv_label_set_text(plot_title, "4 s rolling window");
-    lv_obj_set_style_text_color(plot_title, COLOUR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(plot_title, &lv_font_montserrat_14,
-                                LV_PART_MAIN);
-    lv_obj_set_pos(plot_title, 20, 84);
-
     s_rec_plot_card = lv_obj_create(s_scr_record);
-    lv_obj_set_size(s_rec_plot_card, LCD_H_RES, 130);
-    lv_obj_align(s_rec_plot_card, LV_ALIGN_TOP_MID, 0, 100);
+    lv_obj_set_size(s_rec_plot_card, LCD_H_RES, ECG_PLOT_H + 6);
+    lv_obj_align(s_rec_plot_card, LV_ALIGN_TOP_MID, 0, 73);
     style_card(s_rec_plot_card, 0);
     lv_obj_clear_flag(s_rec_plot_card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(s_rec_plot_card, 0, LV_PART_MAIN);
@@ -2236,16 +2229,9 @@ static void ui_create_record_screen(void)
      * during the screen-load animation. */
 
     /* ── Name text-area ──────────────────────────────────────────── */
-    lv_obj_t *name_hint = lv_label_create(s_scr_record);
-    lv_label_set_text(name_hint, "Recording label (optional):");
-    lv_obj_set_style_text_color(name_hint, COLOUR_SUBTEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(name_hint, &lv_font_montserrat_14,
-                                LV_PART_MAIN);
-    lv_obj_set_pos(name_hint, 20, 232);
-
     s_rec_name_ta = lv_textarea_create(s_scr_record);
-    lv_obj_set_size(s_rec_name_ta, 370, 48);
-    lv_obj_set_pos(s_rec_name_ta, 20, 254);
+    lv_obj_set_size(s_rec_name_ta, 280, 28);
+    lv_obj_set_pos(s_rec_name_ta, 20, 152);
     lv_textarea_set_one_line(s_rec_name_ta, true);
     lv_textarea_set_placeholder_text(s_rec_name_ta, "e.g. rest_baseline");
     lv_textarea_set_max_length(s_rec_name_ta, REC_LABEL_MAX - 1);
@@ -2260,8 +2246,8 @@ static void ui_create_record_screen(void)
 
     /* ── REC/STOP button ─────────────────────────────────────────── */
     s_btn_rec_startstop = lv_btn_create(s_scr_record);
-    lv_obj_set_size(s_btn_rec_startstop, 370, 52);
-    lv_obj_set_pos(s_btn_rec_startstop, 20, 313);
+    lv_obj_set_size(s_btn_rec_startstop, 280, 34);
+    lv_obj_set_pos(s_btn_rec_startstop, 20, 182);
     style_button(s_btn_rec_startstop, COLOUR_SURFACE2, COLOUR_SUCCESS);
     lv_obj_add_event_cb(s_btn_rec_startstop, rec_startstop_btn_cb,
                         LV_EVENT_CLICKED, NULL);
@@ -2281,14 +2267,14 @@ static void ui_create_record_screen(void)
                                  LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_rec_status, &lv_font_montserrat_14,
                                 LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_rec_status, 20, 375);
+    lv_obj_set_pos(s_lbl_rec_status, 8, 218);
 
     /* ── Tab row ─────────────────────────────────────────────────── */
-    int tab_w = 58, gap = 6, start_x = 8, tab_y = 404;
+    int tab_w = 38, gap = 4, start_x = 20, tab_y = 49;
     for (int i = 0; i < REC_TAB_COUNT; i++) {
         lv_obj_t *btn = lv_btn_create(s_scr_record);
         s_rec_tab_btns[i] = btn;
-        lv_obj_set_size(btn, tab_w, 48);
+        lv_obj_set_size(btn, tab_w, 22);
         lv_obj_set_pos(btn, start_x + i*(tab_w+gap), tab_y);
         style_button(btn, COLOUR_SURFACE2, COLOUR_MUTEDTAB);
 
@@ -2371,7 +2357,7 @@ static void timeout_dd_cb(lv_event_t *e)
 static lv_obj_t *settings_row(lv_obj_t *parent, int y, const char *title, const char *subtitle)
 {
     lv_obj_t *panel = lv_obj_create(parent);
-    lv_obj_set_size(panel, 370, 68);
+    lv_obj_set_size(panel, LCD_H_RES - 14, 56);
     lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, y);
     lv_obj_set_style_bg_color(panel, COLOUR_SURFACE, LV_PART_MAIN);
     lv_obj_set_style_border_color(panel, COLOUR_SUBTEXT, LV_PART_MAIN);
@@ -2416,16 +2402,16 @@ static void home_btn_event(lv_event_t *e)
         bp_destroy_chart();
     }
 #if LVGL_VERSION_MAJOR >= 9
-    lv_screen_load_anim(target, LV_SCR_LOAD_ANIM_MOVE_LEFT, 240, 0, false);
+    lv_screen_load_anim(target, LV_SCR_LOAD_ANIM_FADE_IN, 240, 0, false);
 #else
-    lv_scr_load_anim(target, LV_SCR_LOAD_ANIM_MOVE_LEFT, 240, 0, false);
+    lv_scr_load_anim(target, LV_SCR_LOAD_ANIM_FADE_IN, 240, 0, false);
 #endif
 }
 
 static lv_obj_t *make_home_tile(lv_obj_t *parent, int x, int y, const char *text)
 {
     lv_obj_t *btn = lv_btn_create(parent);
-    lv_obj_set_size(btn, 170, 78);
+    lv_obj_set_size(btn, 74, 52);
     lv_obj_set_pos(btn, x, y);
     style_button(btn, COLOUR_SURFACE, COLOUR_SUBTEXT);
 
@@ -2447,53 +2433,43 @@ static void ui_create_home_screen(void)
     lv_label_set_text(title, "Watch");
     lv_obj_set_style_text_color(title, COLOUR_ACCENT, LV_PART_MAIN);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 10, 10);
 
     s_lbl_battery = lv_label_create(s_scr_home);
     lv_label_set_text(s_lbl_battery, "--%");
     lv_obj_set_style_text_color(s_lbl_battery, COLOUR_SUCCESS, LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_lbl_battery, &lv_font_montserrat_18, LV_PART_MAIN);
-    lv_obj_align(s_lbl_battery, LV_ALIGN_TOP_RIGHT, -50, 20);
+    lv_obj_set_style_text_font(s_lbl_battery, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(s_lbl_battery, LV_ALIGN_TOP_RIGHT, -10, 12);
 
     s_lbl_time = lv_label_create(s_scr_home);
     lv_label_set_text(s_lbl_time, "--:--");
     lv_obj_set_style_text_color(s_lbl_time, COLOUR_TEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_time, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_align(s_lbl_time, LV_ALIGN_TOP_MID, 0, 56);
+    lv_obj_align(s_lbl_time, LV_ALIGN_TOP_LEFT, 10, 30);
 
     s_lbl_date = lv_label_create(s_scr_home);
     lv_label_set_text(s_lbl_date, "Time not synced");
     lv_obj_set_style_text_color(s_lbl_date, COLOUR_SUBTEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_lbl_date, &lv_font_montserrat_18, LV_PART_MAIN);
-    lv_obj_align(s_lbl_date, LV_ALIGN_TOP_MID, 0, 120);
+    lv_obj_set_style_text_font(s_lbl_date, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(s_lbl_date, LV_ALIGN_TOP_LEFT, 10, 92);
 
     s_lbl_time_hint = lv_label_create(s_scr_home);
     lv_label_set_text(s_lbl_time_hint, "Connect WiFi in Settings");
     lv_obj_set_style_text_color(s_lbl_time_hint, COLOUR_WARN, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_time_hint, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(s_lbl_time_hint, LV_ALIGN_TOP_MID, 0, 150);
+    lv_obj_align(s_lbl_time_hint, LV_ALIGN_TOP_LEFT, 10, 112);
 
     /*
-     * Main-menu tiles — the Sleep tile has been removed.
-     * Five remaining tiles are arranged 2 / 2 / 1 (centred) so that the
-     * vertical rhythm of the original 6-tile layout is preserved while the
-     * last tile is horizontally centred:
-     *
-     *   row 1 (y=200) :  Record  |  B.P.
-     *   row 2 (y=292) :  Files   |  Settings
-     *   row 3 (y=384) :        About (centred)
-     *
-     * Tile width is 170 px (see make_home_tile). The 410 px wide screen has
-     * a 30 px outer margin and a 30 px gap between two tiles, so:
-     *   left  column x = 30
-     *   right column x = 210            (= 30 + 170 + 10)
-     *   centred tile x = (410-170)/2 = 120
+     * 320×240 landscape layout: clock/date on left, 2×3 tile grid on right.
+     *   tile w=74, h=52, gap=8
+     *   col 1 x=162, col 2 x=244  (right of 320)
+     *   row 1 y=18, row 2 y=78, row 3 y=138
      */
-    lv_obj_t *b1 = make_home_tile(s_scr_home,  30, 200, "Record");
-    lv_obj_t *b2 = make_home_tile(s_scr_home, 210, 200, "B.P.");
-    lv_obj_t *b3 = make_home_tile(s_scr_home,  30, 292, "Files");
-    lv_obj_t *b4 = make_home_tile(s_scr_home, 210, 292, "Settings");
-    lv_obj_t *b5 = make_home_tile(s_scr_home, 120, 384, "About");
+    lv_obj_t *b1 = make_home_tile(s_scr_home,  162, 18, "Record");
+    lv_obj_t *b2 = make_home_tile(s_scr_home, 244, 18, "B.P.");
+    lv_obj_t *b3 = make_home_tile(s_scr_home,  162, 78, "Files");
+    lv_obj_t *b4 = make_home_tile(s_scr_home, 244, 78, "Settings");
+    lv_obj_t *b5 = make_home_tile(s_scr_home,  162, 138, "About");
 
     lv_obj_add_event_cb(b1, home_btn_event, LV_EVENT_CLICKED, s_scr_record);
     lv_obj_add_event_cb(b2, home_btn_event, LV_EVENT_CLICKED, s_scr_pump);
@@ -2507,17 +2483,19 @@ static void ui_create_wifi_screen(void)
     s_scr_wifi = lv_obj_create(NULL);
     style_screen(s_scr_wifi);
 
-    make_title(s_scr_wifi, "WiFi Networks", 14);
+    /* Compact top section: title + status on first line, 3 buttons on second,
+     * then the list takes the remaining height. */
+    make_title(s_scr_wifi, "WiFi Networks", 8);
 
     s_wifi_status = lv_label_create(s_scr_wifi);
     lv_label_set_text(s_wifi_status, "Tap Rescan to search");
     lv_obj_set_style_text_color(s_wifi_status, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_wifi_status, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(s_wifi_status, LV_ALIGN_TOP_MID, 0, 50);
+    lv_obj_align(s_wifi_status, LV_ALIGN_TOP_RIGHT, -8, 12);
 
     lv_obj_t *btn_back = lv_btn_create(s_scr_wifi);
-    lv_obj_set_size(btn_back, 90, 42);
-    lv_obj_align(btn_back, LV_ALIGN_TOP_LEFT, 14, 72);
+    lv_obj_set_size(btn_back, 80, 30);
+    lv_obj_align(btn_back, LV_ALIGN_TOP_LEFT, 8, 36);
     style_button(btn_back, COLOUR_SURFACE2, COLOUR_SUBTEXT);
     lv_obj_add_event_cb(btn_back, wifi_back_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
@@ -2526,8 +2504,8 @@ static void ui_create_wifi_screen(void)
     lv_obj_center(lbl_back);
 
     lv_obj_t *btn_main = lv_btn_create(s_scr_wifi);
-    lv_obj_set_size(btn_main, 120, 42);
-    lv_obj_align(btn_main, LV_ALIGN_TOP_MID, 0, 72);
+    lv_obj_set_size(btn_main, 100, 30);
+    lv_obj_align(btn_main, LV_ALIGN_TOP_MID, 0, 36);
     style_button(btn_main, COLOUR_SURFACE2, COLOUR_ACCENT);
     lv_obj_add_event_cb(btn_main, wifi_main_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl_main = lv_label_create(btn_main);
@@ -2536,8 +2514,8 @@ static void ui_create_wifi_screen(void)
     lv_obj_center(lbl_main);
 
     lv_obj_t *btn_rescan = lv_btn_create(s_scr_wifi);
-    lv_obj_set_size(btn_rescan, 100, 42);
-    lv_obj_align(btn_rescan, LV_ALIGN_TOP_RIGHT, -14, 72);
+    lv_obj_set_size(btn_rescan, 80, 30);
+    lv_obj_align(btn_rescan, LV_ALIGN_TOP_RIGHT, -8, 36);
     style_button(btn_rescan, COLOUR_SURFACE2, COLOUR_SUCCESS);
     lv_obj_add_event_cb(btn_rescan, wifi_rescan_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl_rescan = lv_label_create(btn_rescan);
@@ -2545,24 +2523,19 @@ static void ui_create_wifi_screen(void)
     lv_obj_set_style_text_color(lbl_rescan, COLOUR_TEXT, LV_PART_MAIN);
     lv_obj_center(lbl_rescan);
 
+    /* List container fills the remaining height below the buttons. */
     s_wifi_container = lv_obj_create(s_scr_wifi);
-    lv_obj_set_size(s_wifi_container, 382, 310);
-    lv_obj_align(s_wifi_container, LV_ALIGN_TOP_MID, 0, 130);
+    lv_obj_set_size(s_wifi_container, LCD_H_RES - 16, LCD_V_RES - 72);
+    lv_obj_align(s_wifi_container, LV_ALIGN_TOP_MID, 0, 68);
     lv_obj_set_style_bg_color(s_wifi_container, COLOUR_SURFACE, LV_PART_MAIN);
     lv_obj_set_style_border_color(s_wifi_container, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_wifi_container, 1, LV_PART_MAIN);
-    lv_obj_set_style_radius(s_wifi_container, 14, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(s_wifi_container, 10, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_wifi_container, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_wifi_container, 6, LV_PART_MAIN);
     lv_obj_set_flex_flow(s_wifi_container, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_wifi_container, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_scroll_dir(s_wifi_container, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(s_wifi_container, LV_SCROLLBAR_MODE_AUTO);
-
-    lv_obj_t *hint = lv_label_create(s_scr_wifi);
-    lv_label_set_text(hint, "Tap Main Menu to continue without WiFi");
-    lv_obj_set_style_text_color(hint, COLOUR_SUBTEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
 }
 
 static void ui_create_password_screen(void)
@@ -2576,13 +2549,13 @@ static void ui_create_password_screen(void)
     lv_label_set_text(ssidcap, "Network");
     lv_obj_set_style_text_color(ssidcap, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(ssidcap, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(ssidcap, LV_ALIGN_TOP_LEFT, 24, 72);
+    lv_obj_align(ssidcap, LV_ALIGN_TOP_LEFT, 12, 44);
 
     s_lbl_ssid = lv_label_create(s_scr_pass);
     lv_label_set_text(s_lbl_ssid, "(none)");
     lv_obj_set_style_text_color(s_lbl_ssid, COLOUR_TEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_ssid, &lv_font_montserrat_18, LV_PART_MAIN);
-    lv_obj_align(s_lbl_ssid, LV_ALIGN_TOP_LEFT, 24, 94);
+    lv_obj_align(s_lbl_ssid, LV_ALIGN_TOP_LEFT, 12, 62);
 
     s_lbl_saved_hint = lv_label_create(s_scr_pass);
     lv_label_set_text(s_lbl_saved_hint, "Enter password");
@@ -2591,8 +2564,8 @@ static void ui_create_password_screen(void)
     lv_obj_align(s_lbl_saved_hint, LV_ALIGN_TOP_LEFT, 24, 120);
 
     s_ta_pass = lv_textarea_create(s_scr_pass);
-    lv_obj_set_size(s_ta_pass, 360, 56);
-    lv_obj_align(s_ta_pass, LV_ALIGN_TOP_MID, 0, 148);
+    lv_obj_set_size(s_ta_pass, 212, 40);
+    lv_obj_align(s_ta_pass, LV_ALIGN_TOP_MID, 0, 108);
     lv_textarea_set_password_mode(s_ta_pass, true);
     lv_textarea_set_placeholder_text(s_ta_pass, "Enter password");
     lv_obj_set_style_bg_color(s_ta_pass, COLOUR_SURFACE, LV_PART_MAIN);
@@ -2601,8 +2574,8 @@ static void ui_create_password_screen(void)
     lv_obj_add_event_cb(s_ta_pass, pass_ta_event_cb, LV_EVENT_FOCUSED, NULL);
 
     lv_obj_t *btn_back = lv_btn_create(s_scr_pass);
-    lv_obj_set_size(btn_back, 120, 44);
-    lv_obj_align(btn_back, LV_ALIGN_TOP_LEFT, 24, 224);
+    lv_obj_set_size(btn_back, 100, 40);
+    lv_obj_align(btn_back, LV_ALIGN_TOP_LEFT, 12, 158);
     style_button(btn_back, COLOUR_SURFACE2, COLOUR_SUBTEXT);
     lv_obj_add_event_cb(btn_back, pass_back_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl_back = lv_label_create(btn_back);
@@ -2611,8 +2584,8 @@ static void ui_create_password_screen(void)
     lv_obj_center(lbl_back);
 
     lv_obj_t *btn_conn = lv_btn_create(s_scr_pass);
-    lv_obj_set_size(btn_conn, 160, 44);
-    lv_obj_align(btn_conn, LV_ALIGN_TOP_RIGHT, -24, 224);
+    lv_obj_set_size(btn_conn, 100, 40);
+    lv_obj_align(btn_conn, LV_ALIGN_TOP_RIGHT, -12, 158);
     style_button(btn_conn, COLOUR_SURFACE2, COLOUR_SUCCESS);
     lv_obj_add_event_cb(btn_conn, pass_connect_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *lbl_conn = lv_label_create(btn_conn);
@@ -2656,7 +2629,7 @@ static void ui_create_simple_page(lv_obj_t **scrout, const char *title, const ch
 
     lv_obj_t *lbl = lv_label_create(*scrout);
     lv_label_set_text(lbl, body);
-    lv_obj_set_width(lbl, 340);
+    lv_obj_set_width(lbl, 210);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(lbl, COLOUR_TEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_18, LV_PART_MAIN);
@@ -2673,9 +2646,9 @@ static void ui_create_settings_screen(void)
     make_title(s_scr_settings, "Settings", 18);
     add_back_button(s_scr_settings);
 
-    lv_obj_t *wifirow = settings_row(s_scr_settings, 64, "WiFi", "Scan and connect for time sync");
+    lv_obj_t *wifirow = settings_row(s_scr_settings, 46, "WiFi", "Scan and connect for time sync");
     lv_obj_t *wifibtn = lv_btn_create(wifirow);
-    lv_obj_set_size(wifibtn, 120, 34);
+    lv_obj_set_size(wifibtn, 100, 30);
     lv_obj_align(wifibtn, LV_ALIGN_RIGHT_MID, -10, 0);
     style_button(wifibtn, COLOUR_SURFACE2, COLOUR_ACCENT);
     lv_obj_add_event_cb(wifibtn, settings_wifi_btn_cb, LV_EVENT_CLICKED, NULL);
@@ -2684,10 +2657,10 @@ static void ui_create_settings_screen(void)
     lv_obj_set_style_text_color(wifilbl, COLOUR_TEXT, LV_PART_MAIN);
     lv_obj_center(wifilbl);
 
-    lv_obj_t *brightrow = settings_row(s_scr_settings, 146, "Brightness", "Adjust screen brightness");
+    lv_obj_t *brightrow = settings_row(s_scr_settings, 106, "Brightness", "Adjust screen brightness");
     s_slider_bright = lv_slider_create(brightrow);
-    lv_obj_set_size(s_slider_bright, 170, 8);
-    lv_obj_align(s_slider_bright, LV_ALIGN_RIGHT_MID, -54, -8);
+    lv_obj_set_size(s_slider_bright, 130, 8);
+    lv_obj_align(s_slider_bright, LV_ALIGN_RIGHT_MID, -44, -8);
     lv_slider_set_range(s_slider_bright, 10, 100);
     lv_slider_set_value(s_slider_bright, s_brightness, LV_ANIM_OFF);
     lv_obj_add_event_cb(s_slider_bright, brightness_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
@@ -2697,11 +2670,11 @@ static void ui_create_settings_screen(void)
     lv_obj_set_style_text_color(s_lbl_bright_val, COLOUR_TEXT, LV_PART_MAIN);
     lv_obj_align(s_lbl_bright_val, LV_ALIGN_RIGHT_MID, -12, -8);
 
-    lv_obj_t *timeoutrow = settings_row(s_scr_settings, 228, "Screen timeout", "Auto sleep delay");
+    lv_obj_t *timeoutrow = settings_row(s_scr_settings, 166, "Screen timeout", "Auto sleep delay");
     lv_obj_t *dd = lv_dropdown_create(timeoutrow);
     lv_dropdown_set_options(dd, "15 s\n30 s\n60 s\n120 s");
     lv_dropdown_set_selected(dd, 1);
-    lv_obj_set_width(dd, 116);
+    lv_obj_set_width(dd, 96);
     lv_obj_align(dd, LV_ALIGN_RIGHT_MID, -10, -4);
     lv_obj_add_event_cb(dd, timeout_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
@@ -2760,7 +2733,7 @@ static void bp_build_chart(void)
     if (s_bp_chart || !s_bp_chart_card) return;
 
     s_bp_chart = lv_chart_create(s_bp_chart_card);
-    lv_obj_set_size(s_bp_chart, LCD_H_RES, 100);
+    lv_obj_set_size(s_bp_chart, LCD_H_RES, 48);
     lv_obj_align(s_bp_chart, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_set_style_bg_color(s_bp_chart, COLOUR_BG, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_bp_chart, LV_OPA_COVER, LV_PART_MAIN);
@@ -2963,15 +2936,13 @@ static void bp_ui_timer_cb(lv_timer_t *timer)
 
 /* ========================================================================== */
 /* Files screen                                                               */
-/* Layout (410 × 502 px):                                                     */
+/* Layout (320 × 240 px):                                                     */
 /*   y= 12   Title "Files"                                                    */
-/*   y= 44   Status label (SD / Wi-Fi state, selected file)                  */
-/*   y= 70   [Refresh 185 × 44]  [Connect WiFi 185 × 44]                    */
-/*   y=120   [Send    185 × 44]  [Delete      185 × 44]                     */
-/*   y=172   Scrollable file list (378 × 222)                                */
-/*   y=402   Transfer status label                                            */
-/*   y=424   Transfer detail label (progress bytes)                           */
-/*   y=480   Bottom hint                                                      */
+/*   y= 38   Status label (SD / Wi-Fi state, selected file)                  */
+/*   y= 54   [Refresh 148×36]  [Connect WiFi 106×36]                        */
+/*   y= 96   [Send 106×36]  [Delete 106×36]                                 */
+/*   y=136   Scrollable file list (296×74)                                   */
+/*   bottom  Transfer progress / filename labels                              */
 /* ========================================================================== */
 
 static void files_rebuild_list(void);
@@ -3253,12 +3224,12 @@ static void ui_create_files_screen(void)
     lv_label_set_text(s_lbl_files_status, "Press Refresh to load files");
     lv_obj_set_style_text_color(s_lbl_files_status, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_files_status, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_files_status, 16, 44);
+    lv_obj_set_pos(s_lbl_files_status, 8, 38);
 
     /* ── Button row 1: Refresh | Connect WiFi ───────────────────── */
     lv_obj_t *btn_refresh = lv_btn_create(s_scr_files);
-    lv_obj_set_size(btn_refresh, 185, 44);
-    lv_obj_set_pos(btn_refresh, 16, 70);
+    lv_obj_set_size(btn_refresh, 148, 36);
+    lv_obj_set_pos(btn_refresh, 10, 54);
     style_button(btn_refresh, COLOUR_SURFACE2, COLOUR_ACCENT);
     lv_obj_add_event_cb(btn_refresh, files_refresh_btn_cb, LV_EVENT_CLICKED, NULL);
 
@@ -3269,8 +3240,8 @@ static void ui_create_files_screen(void)
     lv_obj_center(lbl_refresh);
 
     lv_obj_t *btn_wifi = lv_btn_create(s_scr_files);
-    lv_obj_set_size(btn_wifi, 185, 44);
-    lv_obj_set_pos(btn_wifi, 209, 70);
+    lv_obj_set_size(btn_wifi, 106, 36);
+    lv_obj_set_pos(btn_wifi, 168, 54);
     style_button(btn_wifi, COLOUR_SURFACE2, COLOUR_SUBTEXT);
     lv_obj_add_event_cb(btn_wifi, files_wifi_btn_cb, LV_EVENT_CLICKED, NULL);
 
@@ -3282,8 +3253,8 @@ static void ui_create_files_screen(void)
 
     /* ── Button row 2: Send | Delete ────────────────────────────── */
     s_btn_files_send = lv_btn_create(s_scr_files);
-    lv_obj_set_size(s_btn_files_send, 185, 44);
-    lv_obj_set_pos(s_btn_files_send, 16, 120);
+    lv_obj_set_size(s_btn_files_send, 106, 36);
+    lv_obj_set_pos(s_btn_files_send, 10, 98);
     style_button(s_btn_files_send, COLOUR_SURFACE2, COLOUR_SUCCESS);
     lv_obj_add_event_cb(s_btn_files_send, files_send_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_state(s_btn_files_send, LV_STATE_DISABLED);
@@ -3295,8 +3266,8 @@ static void ui_create_files_screen(void)
     lv_obj_center(lbl_send);
 
     s_btn_files_delete = lv_btn_create(s_scr_files);
-    lv_obj_set_size(s_btn_files_delete, 185, 44);
-    lv_obj_set_pos(s_btn_files_delete, 209, 120);
+    lv_obj_set_size(s_btn_files_delete, 106, 36);
+    lv_obj_set_pos(s_btn_files_delete, 168, 98);
     style_button(s_btn_files_delete, COLOUR_SURFACE2, COLOUR_ERROR);
     lv_obj_add_event_cb(s_btn_files_delete, files_delete_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_state(s_btn_files_delete, LV_STATE_DISABLED);
@@ -3309,8 +3280,8 @@ static void ui_create_files_screen(void)
 
     /* ── File list container (scrollable) ───────────────────────── */
     s_files_list_cont = lv_obj_create(s_scr_files);
-    lv_obj_set_size(s_files_list_cont, 378, 222);
-    lv_obj_align(s_files_list_cont, LV_ALIGN_TOP_MID, 0, 172);
+    lv_obj_set_size(s_files_list_cont, 296, 74);
+    lv_obj_align(s_files_list_cont, LV_ALIGN_TOP_MID, 0, 136);
     lv_obj_set_style_bg_color(s_files_list_cont, COLOUR_SURFACE, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_files_list_cont, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_color(s_files_list_cont, COLOUR_SUBTEXT, LV_PART_MAIN);
@@ -3337,20 +3308,13 @@ static void ui_create_files_screen(void)
     lv_label_set_text(s_lbl_files_xfer, "");
     lv_obj_set_style_text_color(s_lbl_files_xfer, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_files_xfer, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_files_xfer, 16, 402);
+    lv_obj_align(s_lbl_files_xfer, LV_ALIGN_BOTTOM_MID, 0, -22);
 
     s_lbl_files_detail = lv_label_create(s_scr_files);
     lv_label_set_text(s_lbl_files_detail, "");
     lv_obj_set_style_text_color(s_lbl_files_detail, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_files_detail, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_files_detail, 16, 424);
-
-    /* ── Bottom hint ────────────────────────────────────────────── */
-    lv_obj_t *hint = lv_label_create(s_scr_files);
-    lv_label_set_text(hint, "BOOT: Home");
-    lv_obj_set_style_text_color(hint, COLOUR_SUBTEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);
+    lv_obj_align(s_lbl_files_detail, LV_ALIGN_BOTTOM_MID, 0, -6);
 
     /* ── UI timer (250 ms) ──────────────────────────────────────── */
     if (!s_files_ui_timer)
@@ -3358,15 +3322,14 @@ static void ui_create_files_screen(void)
 }
 
 /*
- * Layout (410 × 502 px):
- *   y= 10   Title
- *   y= 42   Status label
- *   y= 68   Duration buttons (3 × 110 px)
- *   y=140   Countdown (large, hidden unless recording)
- *   y=210   START/STOP button
- *   y=280   Results card (400 × 80)
- *   y=374   Chart card (410 × 100)
- *   y=484   Bottom hint
+ * Layout (320 × 240 px):
+ *   y= 12   Title
+ *   y= 36   Status label
+ *   y= 56   Duration buttons (3 × 86 px) / Countdown (hidden/shown)
+ *   y= 88   START/STOP button 290×40
+ *   y=130   Results card 290×52
+ *   y=184   Chart card 320×52 (lazy — built after analysis)
+ *   bottom  hint
  */
 static void ui_create_bp_screen(void)
 {
@@ -3386,15 +3349,15 @@ static void ui_create_bp_screen(void)
     lv_label_set_text(s_lbl_bp_status, "Choose duration and press START");
     lv_obj_set_style_text_color(s_lbl_bp_status, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_bp_status, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_bp_status, 16, 44);
+    lv_obj_set_pos(s_lbl_bp_status, 8, 36);
 
     /* ── Duration selector ──────────────────────────────────────── */
     static const char *dur_labels[3] = {"30 s", "1 min", "2 min"};
-    int dur_x[3] = {20, 150, 280};
+    int dur_x[3] = {10, 116, 222};
     for (int i = 0; i < 3; i++) {
         s_btn_bp_dur[i] = lv_btn_create(s_scr_bp);
-        lv_obj_set_size(s_btn_bp_dur[i], 110, 52);
-        lv_obj_set_pos(s_btn_bp_dur[i], dur_x[i], 70);
+        lv_obj_set_size(s_btn_bp_dur[i], 86, 38);
+        lv_obj_set_pos(s_btn_bp_dur[i], dur_x[i], 56);
         style_button(s_btn_bp_dur[i], COLOUR_SURFACE2,
                      (i == 1) ? COLOUR_ACCENT : COLOUR_SUBTEXT);
 
@@ -3413,13 +3376,13 @@ static void ui_create_bp_screen(void)
     lv_obj_set_style_text_color(s_lbl_bp_countdown, COLOUR_TEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_bp_countdown,
                                 &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_align(s_lbl_bp_countdown, LV_ALIGN_TOP_MID, 0, 140);
+    lv_obj_align(s_lbl_bp_countdown, LV_ALIGN_TOP_MID, 0, 56);
     lv_obj_add_flag(s_lbl_bp_countdown, LV_OBJ_FLAG_HIDDEN);
 
     /* ── START/STOP button ──────────────────────────────────────── */
     s_btn_bp_start = lv_btn_create(s_scr_bp);
-    lv_obj_set_size(s_btn_bp_start, 370, 52);
-    lv_obj_set_pos(s_btn_bp_start, 20, 208);
+    lv_obj_set_size(s_btn_bp_start, 290, 40);
+    lv_obj_set_pos(s_btn_bp_start, 15, 88);
     style_button(s_btn_bp_start, COLOUR_SURFACE2, COLOUR_SUCCESS);
     lv_obj_add_event_cb(s_btn_bp_start, bp_startstop_btn_cb,
                         LV_EVENT_CLICKED, NULL);
@@ -3433,8 +3396,8 @@ static void ui_create_bp_screen(void)
 
     /* ── Results card ───────────────────────────────────────────── */
     lv_obj_t *res_card = lv_obj_create(s_scr_bp);
-    lv_obj_set_size(res_card, 400, 84);
-    lv_obj_align(res_card, LV_ALIGN_TOP_MID, 0, 274);
+    lv_obj_set_size(res_card, 290, 52);
+    lv_obj_align(res_card, LV_ALIGN_TOP_MID, 0, 130);
     style_card(res_card, 12);
     lv_obj_clear_flag(res_card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -3443,19 +3406,19 @@ static void ui_create_bp_screen(void)
     lv_obj_set_style_text_color(s_lbl_bp_hrv, COLOUR_ECG, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_bp_hrv, &lv_font_montserrat_14,
                                 LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_bp_hrv, 10, 8);
+    lv_obj_set_pos(s_lbl_bp_hrv, 10, 6);
 
     s_lbl_bp_pat_stat = lv_label_create(res_card);
     lv_label_set_text(s_lbl_bp_pat_stat, "PAT: --   var: --");
     lv_obj_set_style_text_color(s_lbl_bp_pat_stat, COLOUR_PPG, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_bp_pat_stat, &lv_font_montserrat_14,
                                 LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_bp_pat_stat, 10, 46);
+    lv_obj_set_pos(s_lbl_bp_pat_stat, 10, 28);
 
     /* ── Chart card (chart built lazily after analysis) ─────────── */
     s_bp_chart_card = lv_obj_create(s_scr_bp);
-    lv_obj_set_size(s_bp_chart_card, LCD_H_RES, 100);
-    lv_obj_align(s_bp_chart_card, LV_ALIGN_TOP_MID, 0, 370);
+    lv_obj_set_size(s_bp_chart_card, LCD_H_RES, 52);
+    lv_obj_align(s_bp_chart_card, LV_ALIGN_TOP_MID, 0, 184);
     style_card(s_bp_chart_card, 0);
     lv_obj_clear_flag(s_bp_chart_card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(s_bp_chart_card, 0, LV_PART_MAIN);
@@ -3509,6 +3472,44 @@ void app_main(void)
     reset_activity();
 
     if (hal_display_lock_ms(0)) {
+#if ORIENTATION_TEST
+        /* ── Orientation test — four coloured quadrants + USB label ─────────
+         * Set ORIENTATION_TEST 0 in app_config.h to boot normally.
+         * Report: which colour is top-left, which edge shows "v USB v".      */
+        lv_obj_t *tscr = lv_obj_create(NULL);
+        lv_obj_set_style_bg_color(tscr, lv_color_hex(0x000000), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(tscr, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_scrollbar_mode(tscr, LV_SCROLLBAR_MODE_OFF);
+
+        /* Helper macro: coloured quadrant */
+        #define MK_Q(parent, x, y, w, h, col, txt) do { \
+            lv_obj_t *_q = lv_obj_create(parent); \
+            lv_obj_set_size(_q, w, h); lv_obj_set_pos(_q, x, y); \
+            lv_obj_set_style_bg_color(_q, lv_color_hex(col), LV_PART_MAIN); \
+            lv_obj_set_style_bg_opa(_q, LV_OPA_COVER, LV_PART_MAIN); \
+            lv_obj_set_style_border_width(_q, 0, LV_PART_MAIN); \
+            lv_obj_clear_flag(_q, LV_OBJ_FLAG_SCROLLABLE); \
+            lv_obj_t *_l = lv_label_create(_q); \
+            lv_label_set_text(_l, txt); \
+            lv_obj_set_style_text_color(_l, lv_color_hex(0xFFFFFF), LV_PART_MAIN); \
+            lv_obj_center(_l); \
+        } while(0)
+
+        int hw = LCD_H_RES / 2, hh = LCD_V_RES / 2;
+        MK_Q(tscr,  0,  0, hw, hh, 0xCC0000, "TOP-LEFT\nRED");
+        MK_Q(tscr, hw,  0, hw, hh, 0x007700, "TOP-RIGHT\nGREEN");
+        MK_Q(tscr,  0, hh, hw, hh, 0x0000CC, "BOT-LEFT\nBLUE");
+        MK_Q(tscr, hw, hh, hw, hh, 0xAA8800, "BOT-RIGHT\nYELLOW");
+
+        /* USB label — physically the USB connector is on the BOTTOM short edge */
+        lv_obj_t *usb_lbl = lv_label_create(tscr);
+        lv_label_set_text(usb_lbl, "v  USB  v");
+        lv_obj_set_style_text_color(usb_lbl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+        lv_obj_set_style_text_font(usb_lbl, &lv_font_montserrat_18, LV_PART_MAIN);
+        lv_obj_align(usb_lbl, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+        lv_screen_load(tscr);
+#else
         ui_create_wifi_screen();
         ui_create_password_screen();
         ui_create_connecting_screen();
@@ -3519,7 +3520,7 @@ void app_main(void)
         health_update_topbar();
 
         lv_screen_load(s_scr_wifi);
-
+#endif
         hal_display_unlock();
     }
 
