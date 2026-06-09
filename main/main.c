@@ -2210,17 +2210,17 @@ static void ui_create_record_screen(void)
     style_card(s_rec_topbar, 14);
     lv_obj_clear_flag(s_rec_topbar, LV_OBJ_FLAG_SCROLLABLE);
 
-    s_lbl_rec_rr   = rec_make_metric(s_rec_topbar, "RR -- bpm",  4,  3,
+    s_lbl_rec_rr   = rec_make_metric(s_rec_topbar, "RR -- bpm",   0,  1,
                                       COLOUR_ECG);
-    s_lbl_rec_hr   = rec_make_metric(s_rec_topbar, "HR --",    78,  3,
+    s_lbl_rec_hr   = rec_make_metric(s_rec_topbar, "HR --",     102,  1,
                                       COLOUR_PPG);
-    s_lbl_rec_spo2 = rec_make_metric(s_rec_topbar, "SpO2 --%", 152,  3,
+    s_lbl_rec_spo2 = rec_make_metric(s_rec_topbar, "SpO2 --%",  176,  1,
                                       COLOUR_ACCENT);
-    s_lbl_rec_batt = rec_make_metric(s_rec_topbar, "BAT --%",    4, 24,
+    s_lbl_rec_batt = rec_make_metric(s_rec_topbar, "BAT --%",     0, 18,
                                       COLOUR_SUCCESS);
-    s_lbl_rec_pat  = rec_make_metric(s_rec_topbar, "PAT --",   78, 24,
+    s_lbl_rec_pat  = rec_make_metric(s_rec_topbar, "PAT --",    102, 18,
                                       COLOUR_PPG);
-    s_lbl_rec_sd   = rec_make_metric(s_rec_topbar, "SD 0 ms",  152, 24,
+    s_lbl_rec_sd   = rec_make_metric(s_rec_topbar, "SD 0 ms",   176, 18,
                                       COLOUR_TEXT);
 
     /* ── Plot strip ──────────────────────────────────────────────── */
@@ -2326,10 +2326,10 @@ static void ui_create_record_screen(void)
 
     /* ── Bottom hint ─────────────────────────────────────────────── */
     lv_obj_t *hint = lv_label_create(s_scr_record);
-    lv_label_set_text(hint, "BOOT button returns to Home");
+    lv_label_set_text(hint, "Bk = Home");
     lv_obj_set_style_text_color(hint, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_RIGHT, -8, -8);
 
     /* ── Initial state ───────────────────────────────────────────── */
     s_active_rec_tab = REC_TAB_ECG;
@@ -3020,64 +3020,48 @@ static void bp_dur_btn_cb(lv_event_t *e)
     if (idx < 0 || idx > 2) return;
     s_bp_chosen_dur_s = durs[idx];
 
-    /* highlight selected button */
-    for (int i = 0; i < 3; i++) {
-        if (!s_btn_bp_dur[i]) continue;
-        style_button(s_btn_bp_dur[i], COLOUR_SURFACE2,
-                     (i == (int)idx) ? COLOUR_ACCENT : COLOUR_SUBTEXT);
+    /* Tapping a duration button starts recording immediately.
+     * Hide the three duration buttons and show the STOP button. */
+    bp_start_recording();
+    if (!svc_bp_rec_is_recording()) {
+        if (s_lbl_bp_status)
+            lv_label_set_text(s_lbl_bp_status, "Error: SD write failed");
+        return;
     }
+    if (s_btn_bp_start) {
+        lv_obj_clear_flag(s_btn_bp_start, LV_OBJ_FLAG_HIDDEN);
+        style_button(s_btn_bp_start, COLOUR_ERROR, COLOUR_ERROR);
+    }
+    for (int i = 0; i < 3; i++)
+        if (s_btn_bp_dur[i])
+            lv_obj_add_flag(s_btn_bp_dur[i], LV_OBJ_FLAG_HIDDEN);
+    if (s_lbl_bp_status)
+        lv_label_set_text(s_lbl_bp_status, "Recording...");
+    if (s_lbl_bp_hrv)   lv_label_set_text(s_lbl_bp_hrv,      "HRV RMSSD: --");
+    if (s_lbl_bp_pat_stat) lv_label_set_text(s_lbl_bp_pat_stat, "PAT: --  var: --");
+    bp_destroy_chart();
 }
 
+/* bp_startstop_btn_cb: STOP only — the STOP button is only visible while
+ * recording.  Recording is started by bp_dur_btn_cb. */
 static void bp_startstop_btn_cb(lv_event_t *e)
 {
     (void)e;
     reset_activity();
+    if (!svc_bp_rec_is_recording()) return;  /* guard */
 
-    if (!svc_bp_rec_is_recording()) {
-        /* START */
-        bp_start_recording();
-        if (!svc_bp_rec_is_recording()) {
-            if (s_lbl_bp_status)
-                lv_label_set_text(s_lbl_bp_status, "Error: SD write failed");
-            return;
-        }
-        if (s_lbl_bp_btn)
-            lv_label_set_text(s_lbl_bp_btn, LV_SYMBOL_STOP "  STOP");
-        if (s_btn_bp_start)
-            style_button(s_btn_bp_start, COLOUR_ERROR, COLOUR_ERROR);
-        if (s_lbl_bp_status)
-            lv_label_set_text(s_lbl_bp_status, "Recording...");
-        if (s_lbl_bp_countdown)
-            lv_obj_clear_flag(s_lbl_bp_countdown, LV_OBJ_FLAG_HIDDEN);
-        for (int i = 0; i < 3; i++)
-            if (s_btn_bp_dur[i])
-                lv_obj_add_flag(s_btn_bp_dur[i], LV_OBJ_FLAG_HIDDEN);
-        if (s_lbl_bp_hrv)
-            lv_label_set_text(s_lbl_bp_hrv, "HRV RMSSD: --");
-        if (s_lbl_bp_pat_stat)
-            lv_label_set_text(s_lbl_bp_pat_stat, "PAT: --  var: --");
-        bp_destroy_chart();
-    } else {
-        /* STOP (manual) */
-        svc_bp_rec_stop();
-        s_bp_was_recording = false;  /* timer must not re-trigger post-stop logic */
-        if (s_bp_sampler_task) {
-            /* sampler will self-delete; clear the handle */
-            s_bp_sampler_task = NULL;
-        }
-        if (s_lbl_bp_btn)
-            lv_label_set_text(s_lbl_bp_btn, LV_SYMBOL_PLAY "  START");
-        if (s_btn_bp_start)
-            style_button(s_btn_bp_start, COLOUR_SURFACE2, COLOUR_SUCCESS);
-        if (s_lbl_bp_countdown)
-            lv_obj_add_flag(s_lbl_bp_countdown, LV_OBJ_FLAG_HIDDEN);
-        for (int i = 0; i < 3; i++)
-            if (s_btn_bp_dur[i])
-                lv_obj_clear_flag(s_btn_bp_dur[i], LV_OBJ_FLAG_HIDDEN);
-        if (s_lbl_bp_status)
-            lv_label_set_text(s_lbl_bp_status, "Analysing...");
-        bp_trigger_analysis();
-    }
+    svc_bp_rec_stop();
+    s_bp_was_recording = false;
+    if (s_bp_sampler_task) s_bp_sampler_task = NULL;
+
+    /* Hide STOP button, show duration buttons */
+    if (s_btn_bp_start) lv_obj_add_flag(s_btn_bp_start, LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < 3; i++)
+        if (s_btn_bp_dur[i]) lv_obj_clear_flag(s_btn_bp_dur[i], LV_OBJ_FLAG_HIDDEN);
+
+    if (s_lbl_bp_status)
+        lv_label_set_text(s_lbl_bp_status, "Analysing...");
+    bp_trigger_analysis();
 }
 
 static void bp_ui_timer_cb(lv_timer_t *timer)
@@ -3099,12 +3083,12 @@ static void bp_ui_timer_cb(lv_timer_t *timer)
         uint32_t remain_s = (elapsed_s < s_bp_chosen_dur_s)
                             ? (s_bp_chosen_dur_s - elapsed_s) : 0;
 
-        if (s_lbl_bp_countdown) {
-            char buf[16];
-            snprintf(buf, sizeof(buf), "%lu:%02lu",
+        if (s_lbl_bp_status) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "Recording  %lu:%02lu",
                      (unsigned long)(remain_s / 60),
                      (unsigned long)(remain_s % 60));
-            lv_label_set_text(s_lbl_bp_countdown, buf);
+            lv_label_set_text(s_lbl_bp_status, buf);
         }
 
         /* Low battery auto-stop */
@@ -3128,12 +3112,8 @@ static void bp_ui_timer_cb(lv_timer_t *timer)
     /* Transition: recording just finished (timer-driven or writer-driven auto-stop) */
     if (s_bp_was_recording && !currently_recording) {
         s_bp_was_recording = false;
-        if (s_lbl_bp_btn)
-            lv_label_set_text(s_lbl_bp_btn, LV_SYMBOL_PLAY "  START");
-        if (s_btn_bp_start)
-            style_button(s_btn_bp_start, COLOUR_SURFACE2, COLOUR_SUCCESS);
-        if (s_lbl_bp_countdown)
-            lv_obj_add_flag(s_lbl_bp_countdown, LV_OBJ_FLAG_HIDDEN);
+        /* Hide STOP button, restore duration selector */
+        if (s_btn_bp_start) lv_obj_add_flag(s_btn_bp_start, LV_OBJ_FLAG_HIDDEN);
         for (int i = 0; i < 3; i++)
             if (s_btn_bp_dur[i])
                 lv_obj_clear_flag(s_btn_bp_dur[i], LV_OBJ_FLAG_HIDDEN);
@@ -3588,12 +3568,12 @@ static void ui_create_bp_screen(void)
 
     /* ── Status label ───────────────────────────────────────────── */
     s_lbl_bp_status = lv_label_create(s_scr_bp);
-    lv_label_set_text(s_lbl_bp_status, "Choose duration and press START");
+    lv_label_set_text(s_lbl_bp_status, "Tap duration to start");
     lv_obj_set_style_text_color(s_lbl_bp_status, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_bp_status, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_pos(s_lbl_bp_status, 8, 36);
 
-    /* ── Duration selector ──────────────────────────────────────── */
+    /* ── Duration selector (tap = start recording) ──────────────── */
     static const char *dur_labels[3] = {"30 s", "1 min", "2 min"};
     int dur_x[3] = {10, 116, 222};
     for (int i = 0; i < 3; i++) {
@@ -3612,35 +3592,32 @@ static void ui_create_bp_screen(void)
                             LV_EVENT_CLICKED, (void *)(intptr_t)i);
     }
 
-    /* ── Countdown label (hidden until recording) ───────────────── */
-    s_lbl_bp_countdown = lv_label_create(s_scr_bp);
-    lv_label_set_text(s_lbl_bp_countdown, "1:00");
-    lv_obj_set_style_text_color(s_lbl_bp_countdown, COLOUR_TEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_lbl_bp_countdown,
-                                &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_align(s_lbl_bp_countdown, LV_ALIGN_TOP_MID, 0, 56);
-    lv_obj_add_flag(s_lbl_bp_countdown, LV_OBJ_FLAG_HIDDEN);
-
-    /* ── START/STOP button ──────────────────────────────────────── */
+    /* ── STOP button — occupies same row as duration buttons, shown only
+     *    when recording is active; duration buttons hidden while it shows. */
     s_btn_bp_start = lv_btn_create(s_scr_bp);
-    lv_obj_set_size(s_btn_bp_start, 290, 40);
-    lv_obj_set_pos(s_btn_bp_start, 15, 88);
-    style_button(s_btn_bp_start, COLOUR_SURFACE2, COLOUR_SUCCESS);
+    lv_obj_set_size(s_btn_bp_start, 290, 38);
+    lv_obj_set_pos(s_btn_bp_start, 15, 56);
+    style_button(s_btn_bp_start, COLOUR_ERROR, COLOUR_ERROR);
+    lv_obj_add_flag(s_btn_bp_start, LV_OBJ_FLAG_HIDDEN);   /* shown when recording */
     lv_obj_add_event_cb(s_btn_bp_start, bp_startstop_btn_cb,
                         LV_EVENT_CLICKED, NULL);
 
     s_lbl_bp_btn = lv_label_create(s_btn_bp_start);
-    lv_label_set_text(s_lbl_bp_btn, LV_SYMBOL_PLAY "  START");
-    lv_obj_set_style_text_color(s_lbl_bp_btn, COLOUR_SUCCESS, LV_PART_MAIN);
+    lv_label_set_text(s_lbl_bp_btn, LV_SYMBOL_STOP "  STOP");
+    lv_obj_set_style_text_color(s_lbl_bp_btn, COLOUR_TEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_bp_btn, &lv_font_montserrat_18,
                                 LV_PART_MAIN);
     lv_obj_center(s_lbl_bp_btn);
 
-    /* ── Results card ───────────────────────────────────────────── */
+    /* Countdown label — no longer displayed; kept as NULL-safe guard for
+     * any existing code paths that reference s_lbl_bp_countdown. */
+    s_lbl_bp_countdown = NULL;
+
+    /* ── Results card (compact — moved up by the removed START button) */
     lv_obj_t *res_card = lv_obj_create(s_scr_bp);
-    lv_obj_set_size(res_card, 290, 52);
-    lv_obj_align(res_card, LV_ALIGN_TOP_MID, 0, 130);
-    style_card(res_card, 12);
+    lv_obj_set_size(res_card, 290, 34);
+    lv_obj_align(res_card, LV_ALIGN_TOP_MID, 0, 98);
+    style_card(res_card, 10);
     lv_obj_clear_flag(res_card, LV_OBJ_FLAG_SCROLLABLE);
 
     s_lbl_bp_hrv = lv_label_create(res_card);
@@ -3648,19 +3625,19 @@ static void ui_create_bp_screen(void)
     lv_obj_set_style_text_color(s_lbl_bp_hrv, COLOUR_ECG, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_bp_hrv, &lv_font_montserrat_14,
                                 LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_bp_hrv, 10, 6);
+    lv_obj_set_pos(s_lbl_bp_hrv, 8, 2);
 
     s_lbl_bp_pat_stat = lv_label_create(res_card);
     lv_label_set_text(s_lbl_bp_pat_stat, "PAT: --   var: --");
     lv_obj_set_style_text_color(s_lbl_bp_pat_stat, COLOUR_PPG, LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_bp_pat_stat, &lv_font_montserrat_14,
                                 LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_bp_pat_stat, 10, 28);
+    lv_obj_set_pos(s_lbl_bp_pat_stat, 8, 18);
 
-    /* ── Chart card (chart built lazily after analysis) ─────────── */
+    /* ── Chart card (moved up by the removed START button) ──────── */
     s_bp_chart_card = lv_obj_create(s_scr_bp);
     lv_obj_set_size(s_bp_chart_card, LCD_H_RES, 52);
-    lv_obj_align(s_bp_chart_card, LV_ALIGN_TOP_MID, 0, 184);
+    lv_obj_align(s_bp_chart_card, LV_ALIGN_TOP_MID, 0, 135);
     style_card(s_bp_chart_card, 0);
     lv_obj_clear_flag(s_bp_chart_card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(s_bp_chart_card, 0, LV_PART_MAIN);
