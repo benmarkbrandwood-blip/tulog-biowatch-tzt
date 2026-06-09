@@ -258,7 +258,7 @@ static lv_obj_t          *s_scr_record          = NULL;
 static lv_obj_t          *s_rec_topbar           = NULL;
 static lv_obj_t          *s_rec_plot_card        = NULL;
 static lv_obj_t          *s_rec_plot             = NULL;
-static lv_obj_t          *s_rec_tab_btns[REC_TAB_COUNT] = {0};
+static lv_obj_t          *s_lbl_rec_tab_name    = NULL;   /* cycle nav label */
 static lv_obj_t          *s_lbl_rec_rr           = NULL;
 static lv_obj_t          *s_lbl_rec_hr           = NULL;
 static lv_obj_t          *s_lbl_rec_spo2         = NULL;
@@ -541,7 +541,7 @@ static void app_back_btn_cb(lv_event_t *e)
 {
     (void)e;
     reset_activity();
-    hal_display_lock(DISPLAY_LOCK_SHORT_MS, "app_back_btn_cb", nav_to_home_locked, NULL);
+    nav_to_home_locked(NULL);
 }
 
 static void add_back_button(lv_obj_t *scr)
@@ -1131,9 +1131,7 @@ static void wifi_main_btn_cb(lv_event_t *e)
 {
     (void)e;
     reset_activity();
-    if (s_scr_home) {
-        hal_display_lock(DISPLAY_LOCK_SHORT_MS, "wifi_main_btn_cb", nav_to_home_locked, NULL);
-    }
+    if (s_scr_home) nav_to_home_locked(NULL);
 }
 
 static void wifi_back_btn_cb(lv_event_t *e)
@@ -1143,11 +1141,12 @@ static void wifi_back_btn_cb(lv_event_t *e)
 
     if (s_wifi_opened_from_files) {
         s_wifi_opened_from_files = false;
-        hal_display_lock(DISPLAY_LOCK_SHORT_MS, "wifi_back_btn_cb", nav_to_files_locked, NULL);
+        nav_to_files_locked(NULL);
     } else if (s_wifi_opened_from_settings) {
-        hal_display_lock(DISPLAY_LOCK_SHORT_MS, "wifi_back_btn_cb", nav_to_settings_locked, NULL);
+        s_wifi_opened_from_settings = false;
+        nav_to_settings_locked(NULL);
     } else if (s_scr_home) {
-        hal_display_lock(DISPLAY_LOCK_SHORT_MS, "wifi_back_btn_cb", nav_to_home_locked, NULL);
+        nav_to_home_locked(NULL);
     }
 }
 
@@ -1163,7 +1162,7 @@ static void settings_wifi_btn_cb(lv_event_t *e)
     (void)e;
     reset_activity();
     s_wifi_opened_from_settings = true;
-    hal_display_lock(DISPLAY_LOCK_SHORT_MS, "settings_wifi_btn_cb(nav)", nav_to_wifi_locked, NULL);
+    nav_to_wifi_locked(NULL);
     xTaskCreate(wifi_scan_task, "wifi_scan", 6144, NULL, 5, NULL);
 }
 
@@ -1175,7 +1174,7 @@ static void pass_back_btn_cb(lv_event_t *e)
 {
     (void)e;
     reset_activity();
-    hal_display_lock(DISPLAY_LOCK_SHORT_MS, "pass_back_btn_cb", nav_to_wifi_locked, NULL);
+    nav_to_wifi_locked(NULL);
 }
 
 static void pass_connect_btn_cb(lv_event_t *e)
@@ -1188,7 +1187,7 @@ static void pass_connect_btn_cb(lv_event_t *e)
         strlcpy(s_password, pw ? pw : "", sizeof(s_password));
     }
 
-    hal_display_lock(DISPLAY_LOCK_SHORT_MS, "pass_connect_btn_cb", nav_to_conn_locked, NULL);
+    nav_to_conn_locked(NULL);
     xTaskCreate(wifi_connect_task, "wifi_connect", 8192, NULL, 5, NULL);
 }
 
@@ -1934,12 +1933,11 @@ static void rec_update_plot(void)
 
 static void rec_apply_active_tab(void)
 {
-    for (int i = 0; i < REC_TAB_COUNT; i++) {
-        if (!s_rec_tab_btns[i]) continue;
-        style_button(s_rec_tab_btns[i], COLOUR_SURFACE2,
-                     (i == (int)s_active_rec_tab)
-                         ? rec_tab_colour((rec_tab_t)i)
-                         : COLOUR_MUTEDTAB);
+    if (s_lbl_rec_tab_name) {
+        lv_label_set_text(s_lbl_rec_tab_name, rec_tab_name(s_active_rec_tab));
+        lv_obj_set_style_text_color(s_lbl_rec_tab_name,
+                                     rec_tab_colour(s_active_rec_tab),
+                                     LV_PART_MAIN);
     }
     if (s_rec_series) {
 #if LVGL_VERSION_MAJOR >= 9
@@ -1974,15 +1972,21 @@ static void rec_apply_active_tab(void)
 /* Record screen callbacks                                                    */
 /* -------------------------------------------------------------------------- */
 
-static void rec_tab_event_cb(lv_event_t *e)
+static void rec_prev_tab_cb(lv_event_t *e)
 {
+    (void)e;
     reset_activity();
-    intptr_t idx = (intptr_t)lv_event_get_user_data(e);
-    if (idx < 0 || idx >= REC_TAB_COUNT) return;
-    s_active_rec_tab = (rec_tab_t)idx;
-    /* Diagnostic: log every tab switch so we can correlate with the
-     * periodic plot debug line emitted from rec_update_plot(). */
+    s_active_rec_tab = (rec_tab_t)(((int)s_active_rec_tab - 1 + REC_TAB_COUNT)
+                                    % REC_TAB_COUNT);
+    rec_apply_active_tab();
+    rec_update_topbar();
+}
 
+static void rec_next_tab_cb(lv_event_t *e)
+{
+    (void)e;
+    reset_activity();
+    s_active_rec_tab = (rec_tab_t)(((int)s_active_rec_tab + 1) % REC_TAB_COUNT);
     rec_apply_active_tab();
     rec_update_topbar();
 }
@@ -2199,7 +2203,7 @@ static void ui_create_record_screen(void)
     /* ── Top bar ─────────────────────────────────────────────────── */
     s_rec_topbar = lv_obj_create(s_scr_record);
     lv_obj_set_size(s_rec_topbar, LCD_H_RES - 10, 44);
-    lv_obj_align(s_rec_topbar, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_align(s_rec_topbar, LV_ALIGN_TOP_MID, 0, 1);
     style_card(s_rec_topbar, 14);
     lv_obj_clear_flag(s_rec_topbar, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -2219,7 +2223,7 @@ static void ui_create_record_screen(void)
     /* ── Plot strip ──────────────────────────────────────────────── */
     s_rec_plot_card = lv_obj_create(s_scr_record);
     lv_obj_set_size(s_rec_plot_card, LCD_H_RES, ECG_PLOT_H + 6);
-    lv_obj_align(s_rec_plot_card, LV_ALIGN_TOP_MID, 0, 73);
+    lv_obj_align(s_rec_plot_card, LV_ALIGN_TOP_MID, 0, 70);
     style_card(s_rec_plot_card, 0);
     lv_obj_clear_flag(s_rec_plot_card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(s_rec_plot_card, 0, LV_PART_MAIN);
@@ -2231,7 +2235,7 @@ static void ui_create_record_screen(void)
     /* ── Name text-area ──────────────────────────────────────────── */
     s_rec_name_ta = lv_textarea_create(s_scr_record);
     lv_obj_set_size(s_rec_name_ta, 280, 28);
-    lv_obj_set_pos(s_rec_name_ta, 20, 152);
+    lv_obj_set_pos(s_rec_name_ta, 20, 149);
     lv_textarea_set_one_line(s_rec_name_ta, true);
     lv_textarea_set_placeholder_text(s_rec_name_ta, "e.g. rest_baseline");
     lv_textarea_set_max_length(s_rec_name_ta, REC_LABEL_MAX - 1);
@@ -2247,7 +2251,7 @@ static void ui_create_record_screen(void)
     /* ── REC/STOP button ─────────────────────────────────────────── */
     s_btn_rec_startstop = lv_btn_create(s_scr_record);
     lv_obj_set_size(s_btn_rec_startstop, 280, 34);
-    lv_obj_set_pos(s_btn_rec_startstop, 20, 182);
+    lv_obj_set_pos(s_btn_rec_startstop, 20, 179);
     style_button(s_btn_rec_startstop, COLOUR_SURFACE2, COLOUR_SUCCESS);
     lv_obj_add_event_cb(s_btn_rec_startstop, rec_startstop_btn_cb,
                         LV_EVENT_CLICKED, NULL);
@@ -2267,25 +2271,40 @@ static void ui_create_record_screen(void)
                                  LV_PART_MAIN);
     lv_obj_set_style_text_font(s_lbl_rec_status, &lv_font_montserrat_14,
                                 LV_PART_MAIN);
-    lv_obj_set_pos(s_lbl_rec_status, 8, 218);
+    lv_obj_set_pos(s_lbl_rec_status, 8, 215);
 
-    /* ── Tab row ─────────────────────────────────────────────────── */
-    int tab_w = 38, gap = 4, start_x = 20, tab_y = 49;
-    for (int i = 0; i < REC_TAB_COUNT; i++) {
-        lv_obj_t *btn = lv_btn_create(s_scr_record);
-        s_rec_tab_btns[i] = btn;
-        lv_obj_set_size(btn, tab_w, 22);
-        lv_obj_set_pos(btn, start_x + i*(tab_w+gap), tab_y);
-        style_button(btn, COLOUR_SURFACE2, COLOUR_MUTEDTAB);
+    /* ── Signal cycle row: [< Prev]  ECG  [Next >] ──────────────── */
+    /* Two 100 px buttons flanking a centred signal-name label.
+     * Much easier to hit on the resistive screen than 6 × 38 px tabs. */
+    {
+        const int tab_y = 46;
 
-        lv_obj_t *lbl = lv_label_create(btn);
-        lv_label_set_text(lbl, rec_tab_name((rec_tab_t)i));
-        lv_obj_set_style_text_color(lbl, COLOUR_TEXT, LV_PART_MAIN);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14,
-                                    LV_PART_MAIN);
-        lv_obj_center(lbl);
-        lv_obj_add_event_cb(btn, rec_tab_event_cb, LV_EVENT_CLICKED,
-                            (void *)(intptr_t)i);
+        lv_obj_t *btn_prev = lv_btn_create(s_scr_record);
+        lv_obj_set_size(btn_prev, 100, 22);
+        lv_obj_set_pos(btn_prev, 20, tab_y);
+        style_button(btn_prev, COLOUR_SURFACE2, COLOUR_SUBTEXT);
+        lv_obj_t *lp = lv_label_create(btn_prev);
+        lv_label_set_text(lp, LV_SYMBOL_LEFT "  Prev");
+        lv_obj_set_style_text_color(lp, COLOUR_TEXT, LV_PART_MAIN);
+        lv_obj_set_style_text_font(lp, &lv_font_montserrat_14, LV_PART_MAIN);
+        lv_obj_center(lp);
+        lv_obj_add_event_cb(btn_prev, rec_prev_tab_cb, LV_EVENT_CLICKED, NULL);
+
+        s_lbl_rec_tab_name = lv_label_create(s_scr_record);
+        lv_obj_set_style_text_font(s_lbl_rec_tab_name,
+                                    &lv_font_montserrat_14, LV_PART_MAIN);
+        lv_obj_align(s_lbl_rec_tab_name, LV_ALIGN_TOP_MID, 0, tab_y + 4);
+
+        lv_obj_t *btn_next = lv_btn_create(s_scr_record);
+        lv_obj_set_size(btn_next, 100, 22);
+        lv_obj_set_pos(btn_next, 200, tab_y);
+        style_button(btn_next, COLOUR_SURFACE2, COLOUR_SUBTEXT);
+        lv_obj_t *ln = lv_label_create(btn_next);
+        lv_label_set_text(ln, "Next  " LV_SYMBOL_RIGHT);
+        lv_obj_set_style_text_color(ln, COLOUR_TEXT, LV_PART_MAIN);
+        lv_obj_set_style_text_font(ln, &lv_font_montserrat_14, LV_PART_MAIN);
+        lv_obj_center(ln);
+        lv_obj_add_event_cb(btn_next, rec_next_tab_cb, LV_EVENT_CLICKED, NULL);
     }
 
     /* ── On-screen keyboard ──────────────────────────────────────── */
@@ -2678,15 +2697,6 @@ static void ui_create_settings_screen(void)
     lv_obj_align(dd, LV_ALIGN_RIGHT_MID, -10, -4);
     lv_obj_add_event_cb(dd, timeout_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    lv_obj_t *note = lv_label_create(s_scr_settings);
-    lv_label_set_text(note,
-        "Health screen:\n"
-        "- ECG active now\n"
-        "- PPG/RESP/NAS/FCG scaffolded\n"
-        "- BOOT button returns Home");
-    lv_obj_set_style_text_color(note, COLOUR_SUBTEXT, LV_PART_MAIN);
-    lv_obj_set_style_text_font(note, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(note, LV_ALIGN_BOTTOM_LEFT, 20, -24);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -3061,8 +3071,7 @@ static void files_wifi_btn_cb(lv_event_t *e)
     reset_activity();
     s_wifi_opened_from_settings = false;
     s_wifi_opened_from_files    = true;
-    hal_display_lock(DISPLAY_LOCK_SHORT_MS, "files_wifi_btn_cb",
-                     nav_to_wifi_locked, NULL);
+    nav_to_wifi_locked(NULL);
     xTaskCreate(wifi_scan_task, "wifi_scan", 6144, NULL, 5, NULL);
 }
 
@@ -3426,7 +3435,7 @@ static void ui_create_bp_screen(void)
 
     /* ── Bottom hint ────────────────────────────────────────────── */
     lv_obj_t *hint = lv_label_create(s_scr_bp);
-    lv_label_set_text(hint, "RR (cyan)  PAT (orange)  BOOT: Home");
+    lv_label_set_text(hint, "RR cyan  |  PAT orange");
     lv_obj_set_style_text_color(hint, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);

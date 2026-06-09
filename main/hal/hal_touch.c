@@ -18,6 +18,12 @@
  * Below this value the pen is considered up.  Matches TFT_eSPI default. */
 #define XPT_Z_THRESHOLD  350
 
+/* Empirical Y correction: touch registers this many pixels above the finger.
+ * Shifts the hit zone down so taps land on the visually-correct target.
+ * Side-effect: the top XPT_Y_OFFSET pixels of the touch range are unreachable
+ * (topbar area y<49 has no interactive widgets, so this is acceptable). */
+#define XPT_Y_OFFSET     40
+
 /* ADC calibration — raw range → screen pixel.
  * Derived from hardware corner-touch measurements (2026-06-06):
  *   top-left  raw_x≈2923 raw_y≈2793
@@ -106,9 +112,8 @@ static void xpt2046_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     uint16_t raw_x = xpt2046_read(XPT2046_CMD_X);
     uint16_t raw_y = xpt2046_read(XPT2046_CMD_Y);
 
-    /* Log raw values for calibration — watch serial output while touching
-     * screen corners and update XPT_X/Y_MIN/MAX above. */
-    ESP_LOGI(TAG, "z=%d raw x=%d y=%d", z, raw_x, raw_y);
+    /* Uncomment to recalibrate: watch z/raw values while touching screen corners.
+     * ESP_LOGI(TAG, "z=%d raw x=%d y=%d", z, raw_x, raw_y); */
 
     /* Coordinate mapping for MADCTL=0x40 landscape 320×240.
      * Verified by corner-touch calibration (2026-06-06):
@@ -118,7 +123,9 @@ static void xpt2046_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     int16_t lx = (int16_t)(LCD_H_RES - 1)
                  - xpt_map(raw_x, XPT_X_MIN, XPT_X_MAX, LCD_H_RES - 1);
     int16_t ly = (int16_t)(LCD_V_RES - 1)
-                 - xpt_map(raw_y, XPT_Y_MIN, XPT_Y_MAX, LCD_V_RES - 1);
+                 - xpt_map(raw_y, XPT_Y_MIN, XPT_Y_MAX, LCD_V_RES - 1)
+                 + XPT_Y_OFFSET;
+    if (ly >= (int16_t)LCD_V_RES) ly = (int16_t)(LCD_V_RES - 1);
 
     data->point.x = lx;
     data->point.y = ly;

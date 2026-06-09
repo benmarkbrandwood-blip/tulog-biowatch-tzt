@@ -88,7 +88,7 @@
 /* Display / power management                                                 */
 /* -------------------------------------------------------------------------- */
 
-#define DEFAULT_BRIGHTNESS          80
+#define DEFAULT_BRIGHTNESS          50
 #define DEFAULT_TIMEOUT_S           30
 
 #define DISPLAY_LOCK_SLICE_MS       50
