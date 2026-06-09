@@ -9,34 +9,21 @@
 #include "lvgl.h"
 
 /* XPT2046 channel-select command bytes (12-bit differential mode, PD=11). */
-#define XPT2046_CMD_X   0xD3    /* measure X position (short panel axis) */
-#define XPT2046_CMD_Y   0x93    /* measure Y position (long panel axis)  */
+#define XPT2046_CMD_X   0xD3    /* measure X position */
+#define XPT2046_CMD_Y   0x93    /* measure Y position */
 #define XPT2046_CMD_Z1  0xB3    /* Z1 pressure channel */
 #define XPT2046_CMD_Z2  0xC3    /* Z2 pressure channel */
 
-/* Touch pressure threshold.  Formula: Z = 4095 + Z1 - Z2.
- * Below this value the pen is considered up.  Matches TFT_eSPI default. */
+/* Pressure threshold — pen down when Z > this. */
 #define XPT_Z_THRESHOLD  350
 
-/* Empirical Y correction: touch registers this many pixels above the finger.
- * Shifts the hit zone down so taps land on the visually-correct target.
- * Side-effect: the top XPT_Y_OFFSET pixels of the touch range are unreachable
- * (topbar area y<49 has no interactive widgets, so this is acceptable). */
-#define XPT_Y_OFFSET     40
-
-/* ADC calibration — raw range → screen pixel.
- * Derived from hardware corner-touch measurements (2026-06-06):
- *   top-left  raw_x≈2923 raw_y≈2793
- *   top-right raw_x≈857  raw_y≈2800
- *   bot-left  raw_x≈2858 raw_y≈930
- *   bot-right raw_x≈862  raw_y≈920
- * raw_x: LEFT=high, RIGHT=low → X channel, inverted.
- * raw_y: TOP=high, BOTTOM=low → Y channel, inverted.
- * Margins added beyond the corner-touch extremes to avoid edge clipping. */
-#define XPT_X_MIN   650     /* raw_x at RIGHT screen edge */
-#define XPT_X_MAX   3200    /* raw_x at LEFT  screen edge */
-#define XPT_Y_MIN   650     /* raw_y at BOTTOM screen edge */
-#define XPT_Y_MAX   3100    /* raw_y at TOP   screen edge */
+/* Calibration: raw ADC range → screen pixel.
+ * Defaults from corner-touch session (2026-06-06).
+ * hal_touch_set_calibration() overwrites these at runtime from NVS. */
+static uint16_t s_x_min = 650;    /* raw_x at RIGHT screen edge */
+static uint16_t s_x_max = 3200;   /* raw_x at LEFT  screen edge */
+static uint16_t s_y_min = 650;    /* raw_y at BOTTOM screen edge */
+static uint16_t s_y_max = 3100;   /* raw_y at TOP   screen edge */
 
 static const char *TAG = "Touch";
 static spi_device_handle_t s_xpt = NULL;
@@ -53,9 +40,6 @@ static uint16_t xpt2046_read_once(uint8_t cmd)
         .rx_buffer = rx,
     };
     spi_device_polling_transmit(s_xpt, &t);
-    /* rx[0]: received during command byte — discard.
-     * rx[1..2]: [null bit][B11..B5][B4..B0][3 don't-care bits]
-     * Extract 12-bit result: (rx[1]<<5) | (rx[2]>>3) */
     return ((uint16_t)(rx[1] << 8 | rx[2]) >> 3) & 0x0FFF;
 }
 
@@ -65,7 +49,7 @@ static uint16_t xpt2046_read_once(uint8_t cmd)
 
 static uint16_t xpt2046_read(uint8_t cmd)
 {
-    xpt2046_read_once(cmd);          /* discard first sample — settling time */
+    xpt2046_read_once(cmd);          /* discard — settling time */
     uint32_t sum = 0;
     for (int i = 0; i < XPT_SAMPLES; i++) sum += xpt2046_read_once(cmd);
     return (uint16_t)(sum / XPT_SAMPLES);
@@ -77,9 +61,6 @@ static uint16_t xpt2046_read_z(void)
 {
     uint16_t z1 = xpt2046_read_once(XPT2046_CMD_Z1);
     uint16_t z2 = xpt2046_read_once(XPT2046_CMD_Z2);
-    /* Z = 4095 + Z1 - Z2.  Positive and > threshold when pen is down.
-     * The special case z==4095 (Z1=0, Z2=0, pen up) is caught by the
-     * threshold check — no separate handling needed. */
     int32_t z = (int32_t)4095 + (int32_t)z1 - (int32_t)z2;
     return (z > 0) ? (uint16_t)z : 0;
 }
@@ -100,9 +81,6 @@ static void xpt2046_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
     (void)indev;
 
-    /* The LovyanGFX reference demo for this board sets pin_int=-1 — the
-     * XPT2046 PENIRQ line is not routed to the ESP32.  GPIO36 floats and
-     * cannot be used as an IRQ gate.  Use Z-pressure as the sole gate. */
     uint16_t z = xpt2046_read_z();
     if (z <= XPT_Z_THRESHOLD) {
         data->state = LV_INDEV_STATE_RELEASED;
@@ -112,20 +90,13 @@ static void xpt2046_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     uint16_t raw_x = xpt2046_read(XPT2046_CMD_X);
     uint16_t raw_y = xpt2046_read(XPT2046_CMD_Y);
 
-    /* Uncomment to recalibrate: watch z/raw values while touching screen corners.
-     * ESP_LOGI(TAG, "z=%d raw x=%d y=%d", z, raw_x, raw_y); */
-
-    /* Coordinate mapping for MADCTL=0x40 landscape 320×240.
-     * Verified by corner-touch calibration (2026-06-06):
-     *   raw_x (0xD3) = horizontal axis: LEFT=high, RIGHT=low → invert for LVGL X.
-     *   raw_y (0x93) = vertical axis:   TOP=high, BOTTOM=low → invert for LVGL Y.
-     * No X/Y swap needed for this display/touch overlay orientation. */
+    /* raw_x: LEFT=high, RIGHT=low → invert.
+     * raw_y: TOP=high, BOTTOM=low → invert.
+     * Calibration values set by hal_touch_set_calibration() (loaded from NVS). */
     int16_t lx = (int16_t)(LCD_H_RES - 1)
-                 - xpt_map(raw_x, XPT_X_MIN, XPT_X_MAX, LCD_H_RES - 1);
+                 - xpt_map(raw_x, s_x_min, s_x_max, LCD_H_RES - 1);
     int16_t ly = (int16_t)(LCD_V_RES - 1)
-                 - xpt_map(raw_y, XPT_Y_MIN, XPT_Y_MAX, LCD_V_RES - 1)
-                 + XPT_Y_OFFSET;
-    if (ly >= (int16_t)LCD_V_RES) ly = (int16_t)(LCD_V_RES - 1);
+                 - xpt_map(raw_y, s_y_min, s_y_max, LCD_V_RES - 1);
 
     data->point.x = lx;
     data->point.y = ly;
@@ -134,16 +105,30 @@ static void xpt2046_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
 
+void hal_touch_set_calibration(uint16_t x_min, uint16_t x_max,
+                                uint16_t y_min, uint16_t y_max)
+{
+    s_x_min = x_min;
+    s_x_max = x_max;
+    s_y_min = y_min;
+    s_y_max = y_max;
+    ESP_LOGI(TAG, "Cal: x %u-%u  y %u-%u", x_min, x_max, y_min, y_max);
+}
+
+bool hal_touch_read_raw(uint16_t *x, uint16_t *y)
+{
+    if (xpt2046_read_z() <= XPT_Z_THRESHOLD) return false;
+    *x = xpt2046_read(XPT2046_CMD_X);
+    *y = xpt2046_read(XPT2046_CMD_Y);
+    return true;
+}
+
 void hal_touch_init(void)
 {
-    /* XPT2046 shares SPI2 with the display (CS=GPIO33).
-     * PENIRQ (GPIO36) is NOT connected on this board — touch detection uses
-     * Z-pressure measurement only, not IRQ.
-     * Must be called after hal_display_init() (SPI2 bus must already exist). */
     spi_device_interface_config_t devcfg = {
-        .clock_speed_hz = 2 * 1000 * 1000,   /* 2 MHz — safe for XPT2046 */
-        .mode           = 0,                  /* CPOL=0, CPHA=0 */
-        .spics_io_num   = PIN_TP_CS,          /* GPIO33 */
+        .clock_speed_hz = 2 * 1000 * 1000,
+        .mode           = 0,
+        .spics_io_num   = PIN_TP_CS,
         .queue_size     = 1,
         .pre_cb         = NULL,
     };

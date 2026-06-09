@@ -460,6 +460,9 @@ static void reset_activity(void)
     s_last_activity = esp_timer_get_time();
 }
 
+/* LVGL event wrapper: reset inactivity timer (used on keyboard VALUE_CHANGED). */
+static void reset_activity_cb(lv_event_t *e) { (void)e; reset_activity(); }
+
 static void screen_sleep(void)
 {
     s_screen_on = false;
@@ -2317,6 +2320,9 @@ static void ui_create_record_screen(void)
                         LV_EVENT_READY, NULL);
     lv_obj_add_event_cb(s_rec_keyboard, rec_kb_event_cb,
                         LV_EVENT_CANCEL, NULL);
+    /* Reset inactivity timer on every key press so typing never triggers sleep */
+    lv_obj_add_event_cb(s_rec_keyboard, reset_activity_cb,
+                        LV_EVENT_VALUE_CHANGED, NULL);
 
     /* ── Bottom hint ─────────────────────────────────────────────── */
     lv_obj_t *hint = lv_label_create(s_scr_record);
@@ -2376,11 +2382,11 @@ static void timeout_dd_cb(lv_event_t *e)
 static lv_obj_t *settings_row(lv_obj_t *parent, int y, const char *title, const char *subtitle)
 {
     lv_obj_t *panel = lv_obj_create(parent);
-    lv_obj_set_size(panel, LCD_H_RES - 14, 56);
+    lv_obj_set_size(panel, LCD_H_RES - 14, 46);
     lv_obj_align(panel, LV_ALIGN_TOP_MID, 0, y);
     lv_obj_set_style_bg_color(panel, COLOUR_SURFACE, LV_PART_MAIN);
-    lv_obj_set_style_border_color(panel, COLOUR_SUBTEXT, LV_PART_MAIN);
-    lv_obj_set_style_border_width(panel, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(panel, COLOUR_SURFACE2, LV_PART_MAIN);
+    lv_obj_set_style_border_width(panel, 2, LV_PART_MAIN);
     lv_obj_set_style_radius(panel, 12, LV_PART_MAIN);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -2388,13 +2394,13 @@ static lv_obj_t *settings_row(lv_obj_t *parent, int y, const char *title, const 
     lv_label_set_text(ttl, title);
     lv_obj_set_style_text_color(ttl, COLOUR_TEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(ttl, &lv_font_montserrat_18, LV_PART_MAIN);
-    lv_obj_align(ttl, LV_ALIGN_TOP_LEFT, 12, 10);
+    lv_obj_align(ttl, LV_ALIGN_TOP_LEFT, 12, 5);
 
     lv_obj_t *sub = lv_label_create(panel);
     lv_label_set_text(sub, subtitle);
     lv_obj_set_style_text_color(sub, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(sub, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 12, 36);
+    lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 12, 28);
 
     return panel;
 }
@@ -2617,6 +2623,9 @@ static void ui_create_password_screen(void)
     lv_obj_align(s_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_flag(s_keyboard, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(s_keyboard, pass_kb_event_cb, LV_EVENT_ALL, NULL);
+    /* Reset inactivity timer on every key press */
+    lv_obj_add_event_cb(s_keyboard, reset_activity_cb,
+                        LV_EVENT_VALUE_CHANGED, NULL);
 }
 
 static void ui_create_connecting_screen(void)
@@ -2657,6 +2666,218 @@ static void ui_create_simple_page(lv_obj_t **scrout, const char *title, const ch
     add_back_button(*scrout);
 }
 
+/* ========================================================================== */
+/* Touch calibration                                                          */
+/* ========================================================================== */
+
+/* NVS namespace / key names for touch calibration. */
+#define TOUCH_CAL_NS   "tcal"
+#define TOUCH_CAL_XMIN "xmin"
+#define TOUCH_CAL_XMAX "xmax"
+#define TOUCH_CAL_YMIN "ymin"
+#define TOUCH_CAL_YMAX "ymax"
+
+static bool load_touch_cal_nvs(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(TOUCH_CAL_NS, NVS_READONLY, &h) != ESP_OK) return false;
+    uint16_t xmin, xmax, ymin, ymax;
+    bool ok = (nvs_get_u16(h, TOUCH_CAL_XMIN, &xmin) == ESP_OK) &&
+              (nvs_get_u16(h, TOUCH_CAL_XMAX, &xmax) == ESP_OK) &&
+              (nvs_get_u16(h, TOUCH_CAL_YMIN, &ymin) == ESP_OK) &&
+              (nvs_get_u16(h, TOUCH_CAL_YMAX, &ymax) == ESP_OK);
+    nvs_close(h);
+    if (ok) hal_touch_set_calibration(xmin, xmax, ymin, ymax);
+    return ok;
+}
+
+static void save_touch_cal_nvs(uint16_t xmin, uint16_t xmax,
+                                uint16_t ymin, uint16_t ymax)
+{
+    nvs_handle_t h;
+    if (nvs_open(TOUCH_CAL_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u16(h, TOUCH_CAL_XMIN, xmin);
+    nvs_set_u16(h, TOUCH_CAL_XMAX, xmax);
+    nvs_set_u16(h, TOUCH_CAL_YMIN, ymin);
+    nvs_set_u16(h, TOUCH_CAL_YMAX, ymax);
+    nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGI(TAG, "Touch cal saved: x %u-%u  y %u-%u", xmin, xmax, ymin, ymax);
+}
+
+/* Calibration target screen positions: top-left, top-right,
+ * bottom-right, bottom-left (20 px from each corner). */
+static const int16_t CAL_TX[4] = { 20, 299, 299,  20 };
+static const int16_t CAL_TY[4] = { 20,  20, 219, 219 };
+static const char *CAL_NAMES[4] = {
+    "Top-left", "Top-right", "Bottom-right", "Bottom-left"
+};
+
+static struct {
+    int        step;
+    uint16_t   raw_x[4];
+    uint16_t   raw_y[4];
+    int        stable;
+    uint16_t   prev_rx, prev_ry;
+    bool       pen_was_down;
+    lv_obj_t  *scr;
+    lv_obj_t  *h_arm;
+    lv_obj_t  *v_arm;
+    lv_obj_t  *instr;
+    lv_obj_t  *step_lbl;
+    lv_timer_t *timer;
+} s_cal;
+
+static void cal_draw_crosshair(int16_t tx, int16_t ty)
+{
+    const int ARM = 20, THICK = 2;
+    lv_obj_set_size(s_cal.h_arm, ARM * 2, THICK);
+    lv_obj_set_pos(s_cal.h_arm,  tx - ARM, ty - THICK / 2);
+    lv_obj_set_size(s_cal.v_arm, THICK, ARM * 2);
+    lv_obj_set_pos(s_cal.v_arm,  tx - THICK / 2, ty - ARM);
+}
+
+static void cal_finish_cb(lv_timer_t *t)
+{
+    lv_timer_delete(t);
+    nav_to_home_locked(NULL);
+}
+
+static void cal_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (s_cal.step >= 4) return;
+
+    uint16_t rx, ry;
+    bool down = hal_touch_read_raw(&rx, &ry);
+
+    if (!down) {
+        /* Require pen-up between corners so a long press doesn't consume
+         * multiple steps.  Reset stable count on release. */
+        if (s_cal.pen_was_down) s_cal.stable = 0;
+        s_cal.pen_was_down = false;
+        return;
+    }
+    s_cal.pen_was_down = true;
+
+    /* Stability: 6 consecutive samples within ±100 raw units. */
+    if (s_cal.stable > 0 &&
+        (abs((int)rx - s_cal.prev_rx) > 100 ||
+         abs((int)ry - s_cal.prev_ry) > 100)) {
+        s_cal.stable = 0;
+    }
+    s_cal.prev_rx = rx;
+    s_cal.prev_ry = ry;
+    if (++s_cal.stable < 6) return;
+    s_cal.stable = 0;
+    s_cal.pen_was_down = false;   /* force pen-up before next corner */
+
+    s_cal.raw_x[s_cal.step] = rx;
+    s_cal.raw_y[s_cal.step] = ry;
+    ESP_LOGI(TAG, "Cal step %d: raw x=%u y=%u", s_cal.step, rx, ry);
+    s_cal.step++;
+
+    if (s_cal.step < 4) {
+        /* Next corner */
+        cal_draw_crosshair(CAL_TX[s_cal.step], CAL_TY[s_cal.step]);
+        char buf[48];
+        snprintf(buf, sizeof(buf), "Touch Calibration\n%s — tap target",
+                 CAL_NAMES[s_cal.step]);
+        lv_label_set_text(s_cal.instr, buf);
+        char sbuf[16];
+        snprintf(sbuf, sizeof(sbuf), "%d / 4", s_cal.step + 1);
+        lv_label_set_text(s_cal.step_lbl, sbuf);
+        return;
+    }
+
+    /* All 4 corners recorded — compute calibration.
+     * raw_x: corners 0,3 are LEFT (high), corners 1,2 are RIGHT (low).
+     * raw_y: corners 0,1 are TOP (high),  corners 2,3 are BOTTOM (low). */
+    uint16_t rx_left  = (uint16_t)(((uint32_t)s_cal.raw_x[0]
+                                   + s_cal.raw_x[3]) / 2);
+    uint16_t rx_right = (uint16_t)(((uint32_t)s_cal.raw_x[1]
+                                   + s_cal.raw_x[2]) / 2);
+    uint16_t ry_top   = (uint16_t)(((uint32_t)s_cal.raw_y[0]
+                                   + s_cal.raw_y[1]) / 2);
+    uint16_t ry_bot   = (uint16_t)(((uint32_t)s_cal.raw_y[2]
+                                   + s_cal.raw_y[3]) / 2);
+
+    /* Extrapolate the measured midpoints (at ±20 px from edges) out to
+     * the true screen edges (x=0..319, y=0..239).
+     * Calibration targets were at x=20,299 (span=279) and y=20,219 (span=199). */
+    int32_t dx = (int32_t)rx_left - rx_right;
+    int32_t dy = (int32_t)ry_top  - ry_bot;
+    uint16_t x_max = (uint16_t)((int32_t)rx_left  + dx * 20 / 279);
+    uint16_t x_min = (uint16_t)((int32_t)rx_right - dx * 20 / 279);
+    uint16_t y_max = (uint16_t)((int32_t)ry_top   + dy * 20 / 199);
+    uint16_t y_min = (uint16_t)((int32_t)ry_bot   - dy * 20 / 199);
+
+    hal_touch_set_calibration(x_min, x_max, y_min, y_max);
+    save_touch_cal_nvs(x_min, x_max, y_min, y_max);
+
+    lv_label_set_text(s_cal.instr, "Calibration saved!\nLoading…");
+    lv_label_set_text(s_cal.step_lbl, "Done");
+    lv_timer_delete(s_cal.timer);
+    s_cal.timer = NULL;
+    lv_timer_create(cal_finish_cb, 1200, NULL);
+}
+
+static void run_touch_calibration(void)
+{
+    memset(&s_cal, 0, sizeof(s_cal));
+
+    s_cal.scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_cal.scr, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_cal.scr, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_scrollbar_mode(s_cal.scr, LV_SCROLLBAR_MODE_OFF);
+
+    s_cal.step_lbl = lv_label_create(s_cal.scr);
+    lv_label_set_text(s_cal.step_lbl, "1 / 4");
+    lv_obj_set_style_text_color(s_cal.step_lbl, lv_color_hex(0xA0B0C0), LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_cal.step_lbl, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_align(s_cal.step_lbl, LV_ALIGN_TOP_MID, 0, 8);
+
+    s_cal.instr = lv_label_create(s_cal.scr);
+    lv_label_set_text(s_cal.instr, "Touch Calibration\nTop-left — tap target");
+    lv_obj_set_style_text_color(s_cal.instr, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_cal.instr, &lv_font_montserrat_18, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_cal.instr, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_align(s_cal.instr, LV_ALIGN_CENTER, 0, 0);
+
+    /* Horizontal and vertical crosshair arms */
+    lv_color_t ch_col = lv_color_hex(0xFF5A30);
+    s_cal.h_arm = lv_obj_create(s_cal.scr);
+    lv_obj_set_style_bg_color(s_cal.h_arm, ch_col, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_cal.h_arm, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_cal.h_arm, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_cal.h_arm, 0, LV_PART_MAIN);
+
+    s_cal.v_arm = lv_obj_create(s_cal.scr);
+    lv_obj_set_style_bg_color(s_cal.v_arm, ch_col, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_cal.v_arm, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_cal.v_arm, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_cal.v_arm, 0, LV_PART_MAIN);
+
+    cal_draw_crosshair(CAL_TX[0], CAL_TY[0]);
+
+#if LVGL_VERSION_MAJOR >= 9
+    lv_screen_load(s_cal.scr);
+#else
+    lv_scr_load(s_cal.scr);
+#endif
+
+    s_cal.timer = lv_timer_create(cal_timer_cb, 30, NULL);
+}
+
+static void settings_cal_btn_cb(lv_event_t *e)
+{
+    (void)e;
+    reset_activity();
+    run_touch_calibration();
+}
+
+/* ========================================================================== */
+
 static void ui_create_settings_screen(void)
 {
     s_scr_settings = lv_obj_create(NULL);
@@ -2665,7 +2886,7 @@ static void ui_create_settings_screen(void)
     make_title(s_scr_settings, "Settings", 18);
     add_back_button(s_scr_settings);
 
-    lv_obj_t *wifirow = settings_row(s_scr_settings, 46, "WiFi", "Scan and connect for time sync");
+    lv_obj_t *wifirow = settings_row(s_scr_settings, 38, "WiFi", "Scan and connect for time sync");
     lv_obj_t *wifibtn = lv_btn_create(wifirow);
     lv_obj_set_size(wifibtn, 100, 30);
     lv_obj_align(wifibtn, LV_ALIGN_RIGHT_MID, -10, 0);
@@ -2676,7 +2897,7 @@ static void ui_create_settings_screen(void)
     lv_obj_set_style_text_color(wifilbl, COLOUR_TEXT, LV_PART_MAIN);
     lv_obj_center(wifilbl);
 
-    lv_obj_t *brightrow = settings_row(s_scr_settings, 106, "Brightness", "Adjust screen brightness");
+    lv_obj_t *brightrow = settings_row(s_scr_settings, 90, "Brightness", "Adjust screen brightness");
     s_slider_bright = lv_slider_create(brightrow);
     lv_obj_set_size(s_slider_bright, 130, 8);
     lv_obj_align(s_slider_bright, LV_ALIGN_RIGHT_MID, -44, -8);
@@ -2689,13 +2910,25 @@ static void ui_create_settings_screen(void)
     lv_obj_set_style_text_color(s_lbl_bright_val, COLOUR_TEXT, LV_PART_MAIN);
     lv_obj_align(s_lbl_bright_val, LV_ALIGN_RIGHT_MID, -12, -8);
 
-    lv_obj_t *timeoutrow = settings_row(s_scr_settings, 166, "Screen timeout", "Auto sleep delay");
+    lv_obj_t *timeoutrow = settings_row(s_scr_settings, 142, "Screen timeout", "Auto sleep delay");
     lv_obj_t *dd = lv_dropdown_create(timeoutrow);
     lv_dropdown_set_options(dd, "15 s\n30 s\n60 s\n120 s");
     lv_dropdown_set_selected(dd, 1);
     lv_obj_set_width(dd, 96);
     lv_obj_align(dd, LV_ALIGN_RIGHT_MID, -10, -4);
     lv_obj_add_event_cb(dd, timeout_dd_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *calrow = settings_row(s_scr_settings, 194, "Touch", "Recalibrate touchscreen");
+    lv_obj_t *calbtn = lv_btn_create(calrow);
+    lv_obj_set_size(calbtn, 110, 30);
+    lv_obj_align(calbtn, LV_ALIGN_RIGHT_MID, -10, 0);
+    style_button(calbtn, COLOUR_SURFACE2, COLOUR_WARN);
+    lv_obj_add_event_cb(calbtn, settings_cal_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *callbl = lv_label_create(calbtn);
+    lv_label_set_text(callbl, "Calibrate");
+    lv_obj_set_style_text_color(callbl, COLOUR_WARN, LV_PART_MAIN);
+    lv_obj_center(callbl);
+    (void)calrow;
 
 }
 
@@ -3478,6 +3711,10 @@ void app_main(void)
     hal_touch_init();
     hal_backlight_set_percent(s_brightness);
 
+    /* Load touch calibration from NVS (written by the calibration screen).
+     * Falls back to hard-coded defaults in hal_touch.c if not yet calibrated. */
+    bool cal_found = load_touch_cal_nvs();
+
     reset_activity();
 
     if (hal_display_lock_ms(0)) {
@@ -3528,7 +3765,13 @@ void app_main(void)
         update_home_time_labels();
         health_update_topbar();
 
-        lv_screen_load(s_scr_wifi);
+        if (!cal_found) {
+            /* First boot — no calibration in NVS.  Show calibration screen;
+             * it navigates to home when done. */
+            run_touch_calibration();
+        } else {
+            lv_screen_load(s_scr_wifi);
+        }
 #endif
         hal_display_unlock();
     }
