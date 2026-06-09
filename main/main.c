@@ -1004,7 +1004,7 @@ static void wifi_ap_btn_cb(lv_event_t *e)
         }
     }
 
-    hal_display_lock(DISPLAY_LOCK_SHORT_MS, "wifi_ap_btn_cb", nav_to_pass_locked, NULL);
+    nav_to_pass_locked(NULL);
 }
 
 static void wifi_button_list_populate(void)

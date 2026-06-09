@@ -24,8 +24,8 @@ void style_card(lv_obj_t *obj, int radius)
 {
     lv_obj_set_style_bg_color(obj, COLOUR_SURFACE, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_color(obj, COLOUR_SUBTEXT, LV_PART_MAIN);
-    lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(obj, COLOUR_SURFACE2, LV_PART_MAIN);
+    lv_obj_set_style_border_width(obj, 2, LV_PART_MAIN);
     lv_obj_set_style_radius(obj, radius, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(obj, 0, LV_PART_MAIN);
 }
