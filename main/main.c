@@ -2206,21 +2206,25 @@ static void ui_create_record_screen(void)
     /* ── Top bar ─────────────────────────────────────────────────── */
     s_rec_topbar = lv_obj_create(s_scr_record);
     lv_obj_set_size(s_rec_topbar, LCD_H_RES - 10, 44);
-    lv_obj_align(s_rec_topbar, LV_ALIGN_TOP_MID, 0, 1);
+    lv_obj_align(s_rec_topbar, LV_ALIGN_TOP_MID, 0, 0);
     style_card(s_rec_topbar, 14);
+    lv_obj_set_style_pad_all(s_rec_topbar, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(s_rec_topbar, 0, LV_PART_MAIN);   /* belt-and-braces: override theme top pad */
     lv_obj_clear_flag(s_rec_topbar, LV_OBJ_FLAG_SCROLLABLE);
 
-    s_lbl_rec_rr   = rec_make_metric(s_rec_topbar, "RR -- bpm",   0,  1,
+    /* Row 1 — y=0: at the very top of the content area. */
+    s_lbl_rec_rr   = rec_make_metric(s_rec_topbar, "RR -- bpm",  10,  0,
                                       COLOUR_ECG);
-    s_lbl_rec_hr   = rec_make_metric(s_rec_topbar, "HR --",     102,  1,
+    s_lbl_rec_hr   = rec_make_metric(s_rec_topbar, "HR --",      112,  0,
                                       COLOUR_PPG);
-    s_lbl_rec_spo2 = rec_make_metric(s_rec_topbar, "SpO2 --%",  176,  1,
+    s_lbl_rec_spo2 = rec_make_metric(s_rec_topbar, "SpO2 --%",   206,  0,
                                       COLOUR_ACCENT);
-    s_lbl_rec_batt = rec_make_metric(s_rec_topbar, "BAT --%",     0, 18,
+    /* Row 2 — y=22: 3/4 character below row 1. */
+    s_lbl_rec_batt = rec_make_metric(s_rec_topbar, "BAT --%",    10, 22,
                                       COLOUR_SUCCESS);
-    s_lbl_rec_pat  = rec_make_metric(s_rec_topbar, "PAT --",    102, 18,
+    s_lbl_rec_pat  = rec_make_metric(s_rec_topbar, "PAT --",     112, 22,
                                       COLOUR_PPG);
-    s_lbl_rec_sd   = rec_make_metric(s_rec_topbar, "SD 0 ms",   176, 18,
+    s_lbl_rec_sd   = rec_make_metric(s_rec_topbar, "SD 0 ms",    206, 22,
                                       COLOUR_TEXT);
 
     /* ── Plot strip ──────────────────────────────────────────────── */
@@ -3615,7 +3619,7 @@ static void ui_create_bp_screen(void)
 
     /* ── Results card (compact — moved up by the removed START button) */
     lv_obj_t *res_card = lv_obj_create(s_scr_bp);
-    lv_obj_set_size(res_card, 290, 34);
+    lv_obj_set_size(res_card, 290, 68);
     lv_obj_align(res_card, LV_ALIGN_TOP_MID, 0, 98);
     style_card(res_card, 10);
     lv_obj_clear_flag(res_card, LV_OBJ_FLAG_SCROLLABLE);
@@ -3637,7 +3641,7 @@ static void ui_create_bp_screen(void)
     /* ── Chart card (moved up by the removed START button) ──────── */
     s_bp_chart_card = lv_obj_create(s_scr_bp);
     lv_obj_set_size(s_bp_chart_card, LCD_H_RES, 52);
-    lv_obj_align(s_bp_chart_card, LV_ALIGN_TOP_MID, 0, 135);
+    lv_obj_align(s_bp_chart_card, LV_ALIGN_TOP_MID, 0, 168);
     style_card(s_bp_chart_card, 0);
     lv_obj_clear_flag(s_bp_chart_card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(s_bp_chart_card, 0, LV_PART_MAIN);
@@ -3645,7 +3649,7 @@ static void ui_create_bp_screen(void)
 
     /* ── Bottom hint ────────────────────────────────────────────── */
     lv_obj_t *hint = lv_label_create(s_scr_bp);
-    lv_label_set_text(hint, "RR cyan  |  PAT orange");
+    lv_label_set_text(hint, "RR green  |  PAT orange");
     lv_obj_set_style_text_color(hint, COLOUR_SUBTEXT, LV_PART_MAIN);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);
