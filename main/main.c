@@ -1701,41 +1701,49 @@ static void bp_sampler_task(void *arg)
             now_us = esp_timer_get_time();
         }
 
-        uint32_t expected_ms = bp_sample_number;
-        uint32_t actual_ms   = (uint32_t)((now_us - start_us) / 1000LL);
+        /* Catchup loop: if we woke up behind schedule (missed ticks), fire up to
+         * 4 samples back-to-back without re-yielding to fill the gap in the CSV.
+         * Beat data (RR/PAT) is correctly zero for fill samples because
+         * cur_rpeak == prev_rpeak_expected within the same heartbeat period. */
+        int catchup_rem = 4;
+        do {
+            uint32_t expected_ms = bp_sample_number;
+            uint32_t actual_ms   = (uint32_t)((now_us - start_us) / 1000LL);
 
-        bp_row_t row = {
-            .time_ms   = expected_ms,
-            .drift_ms  = (int32_t)actual_ms - (int32_t)expected_ms,
-            .ecg       = 0,
-            .ppg       = 0,
-            .r_peak_ms = 0,
-            .rr_us     = 0,
-            .pat_us    = 0,
-        };
+            bp_row_t row = {
+                .time_ms   = expected_ms,
+                .drift_ms  = (int32_t)actual_ms - (int32_t)expected_ms,
+                .ecg       = 0,
+                .ppg       = 0,
+                .r_peak_ms = 0,
+                .rr_us     = 0,
+                .pat_us    = 0,
+            };
 
-        portENTER_CRITICAL(&s_ecg_spinlock);
-        row.ecg = s_ecg_raw[s_ecg_write_index];
-        row.ppg = s_ppg_raw[s_ecg_write_index];
-        int32_t cur_rpeak = s_ecg_last_rpeak_expected;
-        if (cur_rpeak > 0 && cur_rpeak != prev_rpeak_expected) {
-            if (prev_rpeak_expected > 0) {
-                int32_t rr = cur_rpeak - prev_rpeak_expected;
-                if (rr > 0 && rr < 2000)
-                    row.rr_us = (int32_t)rr * 1000;   /* ms → µs */
+            portENTER_CRITICAL(&s_ecg_spinlock);
+            row.ecg = s_ecg_raw[s_ecg_write_index];
+            row.ppg = s_ppg_raw[s_ecg_write_index];
+            int32_t cur_rpeak = s_ecg_last_rpeak_expected;
+            if (cur_rpeak > 0 && cur_rpeak != prev_rpeak_expected) {
+                if (prev_rpeak_expected > 0) {
+                    int32_t rr = cur_rpeak - prev_rpeak_expected;
+                    if (rr > 0 && rr < 2000)
+                        row.rr_us = (int32_t)rr * 1000;   /* ms → µs */
+                }
+                int32_t pat = ppg_det_get_pat_last_ms();
+                row.pat_us    = (pat > 0) ? (int32_t)pat * 1000 : 0;   /* ms → µs */
+                /* Convert ECG-relative expected_ms to BP-recording-relative time */
+                row.r_peak_ms = (uint32_t)((int32_t)cur_rpeak + (int32_t)s_ecg_task_start_ms
+                                            - (int32_t)bp_start_ms);
+                prev_rpeak_expected = cur_rpeak;
             }
-            int32_t pat = ppg_det_get_pat_last_ms();
-            row.pat_us    = (pat > 0) ? (int32_t)pat * 1000 : 0;   /* ms → µs */
-            /* Convert ECG-relative expected_ms to BP-recording-relative time */
-            row.r_peak_ms = (uint32_t)((int32_t)cur_rpeak + (int32_t)s_ecg_task_start_ms
-                                        - (int32_t)bp_start_ms);
-            prev_rpeak_expected = cur_rpeak;
-        }
-        portEXIT_CRITICAL(&s_ecg_spinlock);
+            portEXIT_CRITICAL(&s_ecg_spinlock);
 
-        svc_bp_rec_enqueue(&row);
-        bp_sample_number++;
-        next_us += period_us;
+            svc_bp_rec_enqueue(&row);
+            bp_sample_number++;
+            next_us += period_us;
+            now_us = esp_timer_get_time();
+        } while (--catchup_rem > 0 && now_us >= next_us && svc_bp_rec_is_recording());
     }
 
     s_bp_sampler_task = NULL;
