@@ -80,6 +80,8 @@
 #include "hal_display.h"
 #include "hal_storage.h"
 #include "svc_files.h"
+#include "hal_bus.h"
+#include "svc_biosignal_acq.h"
 
 static const char *TAG = "WatchApp";
 
@@ -154,6 +156,8 @@ static uint32_t s_ecg_actual_ms[ECG_WINDOW_SAMPLES];
 static uint32_t s_ecg_write_index = 0;
 static uint32_t s_ecg_total_samples = 0;
 static int s_ecg_last_raw = 0;
+static int32_t s_ecg2_scaled = 2048;  /* ADS1293 CH2 (Lead II), scaled to 12-bit; feeds ECG chart series 2 */
+static int32_t s_ecg3_scaled = 2048;  /* ADS1293 CH3 (Lead III), scaled to 12-bit; feeds ECG chart series 3 */
 static int s_ecg_min = INT32_MAX;
 static int s_ecg_max = 0;
 static int s_ecg_hr_bpm = 0;
@@ -177,6 +181,16 @@ static int s_resp_dup_elevation = RESP_DUP_ELEVATION;
 static int32_t s_ppg_raw[ECG_WINDOW_SAMPLES];     /* int32_t: holds 19-bit MAX86140 */
 static int32_t s_ppg_min = INT32_MAX;
 static int32_t s_ppg_max = INT32_MIN;
+
+/* ECG Lead II (ADS1293 CH2) — used for 2nd series on ECG chart; protected by s_ecg_spinlock */
+static int32_t s_fcg2_raw[ECG_WINDOW_SAMPLES];
+static int32_t s_fcg2_min = INT32_MAX;
+static int32_t s_fcg2_max = INT32_MIN;
+
+/* ECG Lead III (ADS1293 CH3) — used for 3rd series on ECG chart; protected by s_ecg_spinlock */
+static int32_t s_ecg3_raw[ECG_WINDOW_SAMPLES];
+static int32_t s_ecg3_min = INT32_MAX;
+static int32_t s_ecg3_max = INT32_MIN;
 
 /* PPG bandpass filter state (0.5–16 Hz first-order IIR, mirrors ECG filter) */
 static float s_ppg_hp_state   = 0.0f;
@@ -272,7 +286,11 @@ static lv_obj_t          *s_rec_name_ta          = NULL;
 static lv_obj_t          *s_rec_keyboard         = NULL;
 static lv_timer_t        *s_rec_ui_timer         = NULL;
 static lv_chart_series_t *s_rec_series           = NULL;
+static lv_chart_series_t *s_rec_series_ecg2      = NULL;  /* Lead II — ECG chart only */
+static lv_chart_series_t *s_rec_series_ecg3      = NULL;  /* Lead III — ECG chart only */
 static lv_coord_t         s_rec_chart_points[ECG_WINDOW_SAMPLES];
+static lv_coord_t         s_rec_chart_points2[REC_CHART_POINTS];  /* Lead II ext buffer */
+static lv_coord_t         s_rec_chart_points3[REC_CHART_POINTS];  /* Lead III ext buffer */
 static rec_tab_t          s_active_rec_tab       = REC_TAB_ECG;
 
 /* B.P. screen LVGL objects */
@@ -392,6 +410,35 @@ static void ecg_adc_init(void)
 
 static int ecg_adc_read_raw(void)
 {
+    /* Step the acquisition service: polls DRDYB, reads ADS1293 via SPI if ready. */
+    svc_biosignal_acq_step_100hz();
+
+    biosignal_frame_t frame;
+    svc_biosignal_acq_get_latest(&frame);
+
+    if (frame.valid_mask & BIOSIG_VALID_ECG1) {
+        /* Scale 24-bit signed ADS1293 values → 12-bit pipeline range (baseline 2048).
+         * >> 12 maps ±2^23 to ±2048; +2048 re-centres to the 0–4095 range the
+         * Pan-Tompkins pipeline and chart autoscale expect. */
+        int raw = (int)(frame.ecg1_raw >> 12) + 2048;
+        if (raw < 0)    raw = 0;
+        if (raw > 4095) raw = 4095;
+        s_ecg_last_raw = raw;
+
+        int ecg2 = (int)(frame.ecg2_raw >> 12) + 2048;
+        if (ecg2 < 0)    ecg2 = 0;
+        if (ecg2 > 4095) ecg2 = 4095;
+        s_ecg2_scaled = (int32_t)ecg2;
+
+        int ecg3 = (int)(frame.ecg3_raw >> 12) + 2048;
+        if (ecg3 < 0)    ecg3 = 0;
+        if (ecg3 > 4095) ecg3 = 4095;
+        s_ecg3_scaled = (int32_t)ecg3;
+
+        return raw;
+    }
+
+    /* Fallback: synthetic waveform until a real sensor is wired and confirmed. */
     int raw = ecg_simulate_raw();
     s_ecg_last_raw = raw;
     return raw;
@@ -1415,8 +1462,12 @@ static void ecg_sampler_task(void *arg)
 
     int running_min = INT32_MAX;   /* overridden immediately by first sample */
     int running_max = 0;
-    int32_t running_ppg_min = INT32_MAX;
-    int32_t running_ppg_max = INT32_MIN;
+    int32_t running_ppg_min  = INT32_MAX;
+    int32_t running_ppg_max  = INT32_MIN;
+    int32_t running_fcg2_min = INT32_MAX;
+    int32_t running_fcg2_max = INT32_MIN;
+    int32_t running_ecg3_min = INT32_MAX;
+    int32_t running_ecg3_max = INT32_MIN;
 
     while (1) {
         if (!s_ecg_sampling_enabled) {
@@ -1437,6 +1488,8 @@ static void ecg_sampler_task(void *arg)
 
         uint32_t actual_ms = (uint32_t)((now_us - start_us) / 1000);
         int raw = ecg_adc_read_raw();
+        int32_t fcg2_local = s_ecg2_scaled;  /* ECG Lead II, captured after step_100hz */
+        int32_t ecg3_local = s_ecg3_scaled;  /* ECG Lead III, captured after step_100hz */
 
         float band = signal_bandpass_step((float)raw,
                                           (float)ECG_SAMPLE_HZ,
@@ -1496,6 +1549,18 @@ static void ecg_sampler_task(void *arg)
         if (ppg_sample > running_ppg_max) running_ppg_max = ppg_sample;
         s_ppg_min = running_ppg_min;
         s_ppg_max = running_ppg_max;
+
+        s_fcg2_raw[index] = fcg2_local;
+        if (fcg2_local < running_fcg2_min) running_fcg2_min = fcg2_local;
+        if (fcg2_local > running_fcg2_max) running_fcg2_max = fcg2_local;
+        s_fcg2_min = running_fcg2_min;
+        s_fcg2_max = running_fcg2_max;
+
+        s_ecg3_raw[index] = ecg3_local;
+        if (ecg3_local < running_ecg3_min) running_ecg3_min = ecg3_local;
+        if (ecg3_local > running_ecg3_max) running_ecg3_max = ecg3_local;
+        s_ecg3_min = running_ecg3_min;
+        s_ecg3_max = running_ecg3_max;
 
         if (s_ecg_total_samples > mwi_len + 2) {
             bool local_peak = false;
@@ -1665,10 +1730,14 @@ static void ecg_sampler_task(void *arg)
         }
 
         if ((sample_number % (ECG_WINDOW_SAMPLES * 4)) == 0) {
-            running_min     = raw;
-            running_max     = raw;
-            running_ppg_min = ppg_sample;
-            running_ppg_max = ppg_sample;
+            running_min      = raw;
+            running_max      = raw;
+            running_ppg_min  = ppg_sample;
+            running_ppg_max  = ppg_sample;
+            running_fcg2_min = fcg2_local;
+            running_fcg2_max = fcg2_local;
+            running_ecg3_min = ecg3_local;
+            running_ecg3_max = ecg3_local;
         }
     }
 }
@@ -1819,6 +1888,27 @@ static void rec_fill_sim_plot(rec_tab_t tab)
     }
 }
 
+static void rec_fill_ecg_points(const int32_t *ring_buf, int32_t raw_min, int32_t raw_max,
+                                 uint32_t write_index, uint32_t total_samples,
+                                 lv_coord_t *out)
+{
+    const int chart_pts = REC_CHART_POINTS;
+    const int stride    = ECG_WINDOW_SAMPLES / chart_pts;
+    for (int i = 0; i < chart_pts; i++) {
+        int raw_offset = i * stride;
+        uint32_t src = (write_index + (uint32_t)raw_offset) % ECG_WINDOW_SAMPLES;
+        int y;
+        if (total_samples < (uint32_t)ECG_WINDOW_SAMPLES && raw_offset >= (int)total_samples) {
+            y = 500;
+        } else {
+            y = (int)((int64_t)(ring_buf[src] - raw_min) * 1000 / (raw_max - raw_min + 1));
+            if (y < 0)    y = 0;
+            if (y > 1000) y = 1000;
+        }
+        out[i] = (lv_coord_t)y;
+    }
+}
+
 static void rec_fill_ppg_plot(void)
 {
     static int32_t ppg_copy[ECG_WINDOW_SAMPLES]; /* static: keeps 1600 bytes off LVGL stack */
@@ -1854,6 +1944,7 @@ static void rec_fill_ppg_plot(void)
     }
 }
 
+
 static void rec_update_plot(void)
 {
     /* Lazy chart construction: build the chart 800ms after navigating to
@@ -1874,14 +1965,38 @@ static void rec_update_plot(void)
     }
     if (!s_rec_series) return;
 
+    /* Helper: blank extra series so they don't bleed onto non-ECG tabs. */
+#define BLANK_EXTRA_SERIES() do { \
+    if (s_rec_series_ecg2) { \
+        for (int _i = 0; _i < REC_CHART_POINTS; _i++) \
+            s_rec_chart_points2[_i] = LV_CHART_POINT_NONE; \
+        lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series_ecg2, s_rec_chart_points2); \
+    } \
+    if (s_rec_series_ecg3) { \
+        for (int _i = 0; _i < REC_CHART_POINTS; _i++) \
+            s_rec_chart_points3[_i] = LV_CHART_POINT_NONE; \
+        lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series_ecg3, s_rec_chart_points3); \
+    } \
+} while (0)
+
     if (s_active_rec_tab == REC_TAB_PPG) {
+        BLANK_EXTRA_SERIES();
         rec_fill_ppg_plot();
         lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series,
                                          s_rec_chart_points);
         lv_chart_refresh(s_rec_plot);
         return;
     }
+    if (s_active_rec_tab == REC_TAB_FCG2) {
+        BLANK_EXTRA_SERIES();
+        rec_fill_sim_plot(REC_TAB_FCG2);  /* FCG2 = simulated until real sensor wired */
+        lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series,
+                                         s_rec_chart_points);
+        lv_chart_refresh(s_rec_plot);
+        return;
+    }
     if (s_active_rec_tab != REC_TAB_ECG) {
+        BLANK_EXTRA_SERIES();
         rec_fill_sim_plot(s_active_rec_tab);
         lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series,
                                          s_rec_chart_points);
@@ -1889,45 +2004,38 @@ static void rec_update_plot(void)
         return;
     }
 
-    static int32_t raw_copy[ECG_WINDOW_SAMPLES]; /* static: keeps 1600 bytes off LVGL stack */
+    /* ECG tab: 3 leads simultaneously.  One spinlock grab copies all 3 ring buffers. */
+    static int32_t ecg1_copy[ECG_WINDOW_SAMPLES]; /* static: keeps stack usage low */
+    static int32_t ecg2_copy[ECG_WINDOW_SAMPLES];
+    static int32_t ecg3_copy[ECG_WINDOW_SAMPLES];
     uint32_t write_index, total_samples;
-    int raw_min, raw_max;
+    int32_t  e1_min, e1_max, e2_min, e2_max, e3_min, e3_max;
 
     int64_t t0 = esp_timer_get_time();
     portENTER_CRITICAL(&s_ecg_spinlock);
-    memcpy(raw_copy, s_ecg_raw, sizeof(raw_copy));
+    memcpy(ecg1_copy, s_ecg_raw,   sizeof(ecg1_copy));
+    memcpy(ecg2_copy, s_fcg2_raw,  sizeof(ecg2_copy));
+    memcpy(ecg3_copy, s_ecg3_raw,  sizeof(ecg3_copy));
     write_index   = s_ecg_write_index;
     total_samples = s_ecg_total_samples;
-    raw_min       = s_ecg_min;
-    raw_max       = s_ecg_max;
+    e1_min = s_ecg_min;   e1_max = s_ecg_max;
+    e2_min = s_fcg2_min;  e2_max = s_fcg2_max;
+    e3_min = s_ecg3_min;  e3_max = s_ecg3_max;
     portEXIT_CRITICAL(&s_ecg_spinlock);
     int64_t t1 = esp_timer_get_time();
 
-    if (raw_max <= raw_min) { raw_min = 0; raw_max = 4095; }  /* sim fallback; real ADC autoscales after 1st window */
+    if (e1_max <= e1_min) { e1_min = 0; e1_max = 4095; }
+    if (e2_max <= e2_min) { e2_min = 0; e2_max = 4095; }
+    if (e3_max <= e3_min) { e3_min = 0; e3_max = 4095; }
 
-    /* Subsample the 400 raw samples down to REC_CHART_POINTS chart slots.
-     * Stride = ECG_WINDOW_SAMPLES / REC_CHART_POINTS. Each chart point i
-     * shows raw sample (write_index + i*stride) in the circular buffer. */
-    const int chart_pts = REC_CHART_POINTS;
-    const int stride = ECG_WINDOW_SAMPLES / chart_pts;
-    for (int i = 0; i < chart_pts; i++) {
-        int raw_offset = i * stride;
-        uint32_t src = (write_index + (uint32_t)raw_offset) % ECG_WINDOW_SAMPLES;
-        int y;
-        if (total_samples < (uint32_t)ECG_WINDOW_SAMPLES &&
-            raw_offset >= (int)total_samples) {
-            y = 500;
-        } else {
-            y = (int)((int64_t)(raw_copy[src] - raw_min) * 1000
-                      / (raw_max - raw_min + 1));
-            if (y < 0)    y = 0;
-            if (y > 1000) y = 1000;
-        }
-        s_rec_chart_points[i] = (lv_coord_t)y;
-    }
+    rec_fill_ecg_points(ecg1_copy, e1_min, e1_max, write_index, total_samples, s_rec_chart_points);
+    rec_fill_ecg_points(ecg2_copy, e2_min, e2_max, write_index, total_samples, s_rec_chart_points2);
+    rec_fill_ecg_points(ecg3_copy, e3_min, e3_max, write_index, total_samples, s_rec_chart_points3);
     int64_t t2 = esp_timer_get_time();
 
-    lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series, s_rec_chart_points);
+    lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series,      s_rec_chart_points);
+    lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series_ecg2, s_rec_chart_points2);
+    lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series_ecg3, s_rec_chart_points3);
     int64_t t3 = esp_timer_get_time();
     lv_chart_refresh(s_rec_plot);
     int64_t t4 = esp_timer_get_time();
@@ -2188,6 +2296,18 @@ static void rec_build_chart(void)
                                        rec_tab_colour(s_active_rec_tab),
                                        LV_CHART_AXIS_PRIMARY_Y);
     lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series, s_rec_chart_points);
+
+    /* ECG Lead II and III series — start invisible (POINT_NONE) until ECG tab selected */
+    for (int i = 0; i < REC_CHART_POINTS; i++) {
+        s_rec_chart_points2[i] = LV_CHART_POINT_NONE;
+        s_rec_chart_points3[i] = LV_CHART_POINT_NONE;
+    }
+    s_rec_series_ecg2 = lv_chart_add_series(s_rec_plot, lv_color_hex(0xFFFF00),
+                                             LV_CHART_AXIS_PRIMARY_Y);
+    s_rec_series_ecg3 = lv_chart_add_series(s_rec_plot, lv_color_hex(0x00FFFF),
+                                             LV_CHART_AXIS_PRIMARY_Y);
+    lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series_ecg2, s_rec_chart_points2);
+    lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series_ecg3, s_rec_chart_points3);
 }
 
 /*
@@ -2199,8 +2319,10 @@ static void rec_destroy_chart(void)
 {
     if (!s_rec_plot) return;
     lv_obj_del(s_rec_plot);
-    s_rec_plot = NULL;
-    s_rec_series = NULL;
+    s_rec_plot        = NULL;
+    s_rec_series      = NULL;
+    s_rec_series_ecg2 = NULL;
+    s_rec_series_ecg3 = NULL;
 }
 
 static void ui_create_record_screen(void)
@@ -3698,6 +3820,8 @@ void app_main(void)
     hal_backlight_init();
     hal_display_init();
     hal_touch_init();
+    hal_bus_init();
+    svc_biosignal_acq_init();
     hal_backlight_set_percent(s_brightness);
 
     /* Load touch calibration from NVS (written by the calibration screen).

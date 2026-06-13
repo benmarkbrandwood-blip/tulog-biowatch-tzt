@@ -2,16 +2,13 @@
 
 ## Board context
 
-MCU: ESP32-WROOM-32 (dual-core LX6, 520 KB SRAM, 4 MB flash, no PSRAM).
-Display SPI2 and SD SPI3 are already committed and unchanged.
-Touch: XPT2046 resistive, SPI2 shared with display, CS = GPIO33.
+MCU: ESP32-WROOM-32 (dual-core LX6, 520 KB SRAM, 4 MB flash, no PSRAM). Display and touch are on SPI2 (HSPI). SD card is on SPI3 (VSPI). The ESP32 has no third hardware SPI host; biosensor SPI devices share SPI2. Touch: XPT2046 resistive, SPI2 shared with display, CS = GPIO33.
 
----
 
 ## Pins committed to existing firmware — do not reassign
 
 | GPIO | Function |
-|------|----------|
+| - | - |
 | 2 | ILI9341 DC (SPI2) |
 | 5 | SD CS (SPI3) |
 | 12 | Display MISO (SPI2) |
@@ -28,91 +25,86 @@ Touch: XPT2046 resistive, SPI2 shared with display, CS = GPIO33.
 | 3 | UART0 RX (console) |
 | 6–11 | Internal SPI flash — **never touch** |
 
----
 
-## Confirmed available pins
 
-### Active set — used in sensor integration
+## Biosensor SPI bus — shares SPI2 (display bus)
 
-| GPIO | Direction | Assigned function | Notes |
-|------|-----------|-------------------|-------|
-| **32** | Output | Sensor SPI MOSI | Formerly CST820 SCL — XPT2046 driver does not use it; fully free |
-| **25** | In/Out | Sensor SPI MISO | Formerly CST820 RST — XPT2046 driver does not use it; no loading |
-| **4** | Output | Sensor SPI SCLK | RGB LED G (1 kΩ R17 to Vcc) — remove R17 + LED1 to reclaim |
-| **17** | Output | ADS1220 CS (active-low) | RGB LED R (1 kΩ R16 to Vcc) — remove R16 + LED1 to reclaim |
-| **16** | Output | ADS1293 CS (active-low) | RGB LED B (1 kΩ R20 to Vcc) — remove R20 + LED1 to reclaim |
-| **21** | Bidir | I2C SDA (MAX30102 / MPU-6050) | Board I2C header; no driver active |
-| **22** | Bidir | I2C SCL (MAX30102 / MPU-6050) | Board I2C header; no driver active |
-| **35** | Input only | ADS1220 DRDY | Expansion P3 header; input-only pin; no loading |
+The ESP32 has only two user SPI hosts (SPI2 and SPI3), both already claimed. Biosensor SPI devices (ADS1293, ADS1220) are added to **SPI2** as additional `spi\_bus\_add\_device()` entries alongside the display and touch. The ESP-IDF `spi\_master` driver arbitrates access via a per-bus mutex. Each device carries its own clock-speed setting; biosensor rates (ADS1293 ≤8 MHz, ADS1220 ≤2 MHz) are independent of the display's 40 MHz rate. At 1–2 kSPS the biosensor SPI transactions are tiny bursts that fit cleanly in the gaps between LVGL flushes.
 
-### Reserved — do not assign yet
+| Signal | GPIO | Notes |
+| - | - | - |
+| SPI MOSI | 13 | Shared with ILI9341 + XPT2046 on SPI2 |
+| SPI MISO | 12 | Shared with ILI9341 + XPT2046 on SPI2 |
+| SPI SCLK | 14 | Shared with ILI9341 + XPT2046 on SPI2 |
+| ADS1293 CS | 16 | Active-low — reclaim LED B (remove R20 + LED1) |
+| ADS1220 CS | 17 | Active-low — reclaim LED R (remove R16 + LED1) |
 
-| GPIO | Notes |
-|------|-------|
-| **34** | Input-only; currently photoresistor ADC. Reserve as second DRDY or spare MISO if needed later. |
-| **26** | Audio path through R4 (4.7 kΩ). Remove R4 to clean. Reserve as ADS1293 DRDY/INT or extra CS if a ninth line is needed later. |
 
----
 
-## Sensor bus architecture
+## I2C bus
 
-### Dedicated biosensor SPI bus (SPI2 or SPI3 free slot, TBD in firmware)
+| Signal | GPIO | Notes |
+| - | - | - |
+| SDA | 21 | Board I2C header; no driver active |
+| SCL | 22 | Board I2C header; no driver active |
 
-| Signal | GPIO |
-|--------|------|
-| MOSI | 32 |
-| MISO | 25 |
-| SCLK | 4 |
-| ADS1220 CS | 17 |
-| ADS1293 CS | 16 |
-
-Both CS lines idle HIGH, driven LOW only during a transaction.
-
-### I2C bus (shared)
-
-| Signal | GPIO |
-|--------|------|
-| SDA | 21 |
-| SCL | 22 |
 
 | Device | I2C address |
-|--------|-------------|
+| - | - |
 | MAX30102 | 0x57 |
 | MPU-6050 | 0x68 (AD0 low) or 0x69 (AD0 high) |
 
-### Interrupt / data-ready
 
-| Signal | GPIO |
-|--------|------|
-| ADS1220 DRDY | 35 |
-| ADS1293 DRDY | *reserve io34 or io26 — assign when needed* |
 
----
+## Interrupt and data-ready lines
+
+| Signal | GPIO | Direction | Notes |
+| - | - | - | - |
+| ADS1220 DRDY | 35 | Input-only | Expansion P3 header; no loading |
+| ADS1293 DRDY | 04 | Io  | Formerly planned biosensor SPI SCLK. LED G (1 kΩ R17 to Vcc) — leave populated. Reserve for later if an additional signal line is needed. |
+| MAX30102 INT | 32 | Input | Formerly planned biosensor SPI MOSI; freed by SPI2 sharing |
+| MPU-6050 INT | 25 | Input | Formerly planned biosensor SPI MISO; freed by SPI2 sharing |
+
+
+
+## Reserved — do not assign yet
+
+| GPIO | Notes |
+| - | - |
+| **26** | Audio path through R4 (4.7 kΩ). Reserve — remove R4 to clean if needed later. |
+
+
 
 ## Required board modifications
 
-### Mandatory — reclaim LED pins for SPI
+### Mandatory — reclaim CS pins from LED footprint
 
-Remove **LED1**, **R16**, **R17**, **R20**.
+Remove **R16** (GPIO17 path) and **R20** (GPIO16 path). LED1 can be removed at the same time or left in place (it will simply be dark once the resistors are gone).
 
-Use the GPIO side of each resistor pad (not the Vcc/LED side):
-- GPIO4 pad (R17 GPIO side) → SPI SCLK
+Use the GPIO side of each resistor pad:
+
 - GPIO17 pad (R16 GPIO side) → ADS1220 CS
+
 - GPIO16 pad (R20 GPIO side) → ADS1293 CS
 
-### Optional — clean io26 for future use
+### Not required yet
 
-Remove **R4** (4.7 kΩ) to isolate GPIO26 from the audio amplifier input.
-Not required until io26 is assigned.
+- GPIO4 / R17 (LED G): leave in place. GPIO4 is in reserve; the LED causes no conflict at present.
 
----
+- GPIO26 / R4 (audio): leave in place until GPIO26 is needed.
+
+### Physical access for INT lines
+
+GPIO32 and GPIO25 are not labelled connectors on the TZT board. Verify solder access to those pads on the ESP32-WROOM-32 module before wiring INT lines.
+
 
 ## Cautions
 
-- **ADC2 (includes GPIO25, 26, 32) is blocked during WiFi** on classic ESP32.
-  GPIO25/32/4 are used here as **digital SPI signals only** — ADC on these pins
-  is not attempted. No conflict.
+- **SPI2 is shared with the display DMA.** Never attempt a biosensor SPI transaction from an ISR — always use the `spi\_master` task-level API so the bus mutex is respected.
+
+- **ADC2 (includes GPIO25, 32) is blocked during WiFi** on classic ESP32. GPIO25 and GPIO32 are used here as **digital INT inputs only** — no ADC.
+
 - Keep ECG analog leads physically separated from SPI/TFT/SD wiring.
-- Verify solder-tap access to GPIO25 and GPIO32 on the ESP32 module pads
-  before wiring — these are not labelled connectors on the TZT board.
-- SD card remains on its own SPI3 bus (GPIO18/19/23/5) — no bus sharing with sensors.
+
+- SD card remains on its own SPI3 bus (GPIO18/19/23/5) — no bus sharing with biosensors or display.
+

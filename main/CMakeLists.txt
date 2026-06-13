@@ -14,6 +14,9 @@ idf_component_register(
         "services/svc_record.c"
         "services/svc_bp_record.c"
         "services/svc_files.c"
+        "hal/hal_bus.c"
+        "hal/hal_ads1293.c"
+        "services/svc_biosignal_acq.c"
     INCLUDE_DIRS
         "."
         "ui"

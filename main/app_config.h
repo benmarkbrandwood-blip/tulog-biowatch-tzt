@@ -259,3 +259,37 @@
  * ADC2 is also blocked during WiFi on classic ESP32. Keep this 1 until an
  * external ADC front-end (SPI/I2C) is wired in. */
 #define ECG_USE_SIMULATED_SOURCE  1
+
+/* -------------------------------------------------------------------------- */
+/* Biosensor bus — SPI2 shared with display; I2C0 for MAX30102 + MPU-6050    */
+/* See IO-pin-plan.md for full pin assignments and board-mod notes.           */
+/* -------------------------------------------------------------------------- */
+
+/* ADS1293 (ECG / FCG) — SPI2 shared bus, CS active-low, DRDY active-low.
+ * Remove R20 from the LED B footprint to free GPIO16 as CS.
+ * GPIO4 also drives LED G via R17 (1 kΩ); leave R17 in place — it does not
+ * interfere with digital DRDY input. */
+#define PIN_ADS1293_CS      GPIO_NUM_16
+#define PIN_ADS1293_DRDY    GPIO_NUM_4
+
+/* ADS1220 (nasal thermistor / ERB) — SPI2 shared bus.
+ * Remove R16 from the LED R footprint to free GPIO17 as CS.
+ * GPIO35 is input-only (expansion connector P3); no internal pull-up. */
+#define PIN_ADS1220_CS      GPIO_NUM_17
+#define PIN_ADS1220_DRDY    GPIO_NUM_35   /* input-only; no pull-up capability */
+
+/* MAX30102 (PPG / SpO₂) — I2C0. GPIO32 is digital input only; ADC2 blocked
+ * during WiFi on classic ESP32 so never use GPIO32 as ADC. */
+#define PIN_MAX30102_INT    GPIO_NUM_32
+
+/* MPU-6050 (accelerometer / gyroscope) — I2C0. GPIO25 is digital input only. */
+#define PIN_MPU6050_INT     GPIO_NUM_25
+
+/* I2C0 master bus — SDA=GPIO21, SCL=GPIO22 (board I2C header). */
+#define PIN_I2C_SDA         GPIO_NUM_21
+#define PIN_I2C_SCL         GPIO_NUM_22
+#define I2C_BUS_FREQ_HZ     400000
+
+/* I2C device addresses */
+#define I2C_ADDR_MAX30102   0x57
+#define I2C_ADDR_MPU6050    0x68   /* AD0 low; use 0x69 when AD0 tied high */

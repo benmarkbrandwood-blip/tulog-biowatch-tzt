@@ -103,12 +103,25 @@ void ppg_sim_on_beat(uint32_t r_peak_ms, uint32_t rr_ms)
 
 int16_t ppg_sim_get_sample(uint32_t current_ms)
 {
-    if (!s_ppg.beat_valid || s_ppg.rr_ms == 0)
-        return (int16_t)REC_SIM_CENTRE;
+    /* Bootstrap on first call (no ECG beat received yet). */
+    if (!s_ppg.beat_valid || s_ppg.rr_ms == 0) {
+        s_ppg.beat_foot_ms = current_ms;
+        s_ppg.rr_ms        = 800;   /* default 75 BPM */
+        s_ppg.beat_valid   = true;
+        precompute_denominators(800.0f);
+    }
+
+    /* When ECG is not driving beats, auto-advance the window each period so
+     * the simulation keeps running rather than going flat. */
+    int32_t elapsed = (int32_t)current_ms - (int32_t)s_ppg.beat_foot_ms;
+    if (elapsed > (int32_t)s_ppg.rr_ms) {
+        s_ppg.beat_foot_ms += s_ppg.rr_ms;
+        elapsed -= (int32_t)s_ppg.rr_ms;
+    }
 
     /* Time within the beat window (ms from the foot) */
-    float t = (float)((int32_t)current_ms - (int32_t)s_ppg.beat_foot_ms);
-    if (t < 0.0f || t > (float)s_ppg.rr_ms)
+    float t = (float)elapsed;
+    if (t < 0.0f)
         return (int16_t)REC_SIM_CENTRE;
 
     float rr_f = (float)s_ppg.rr_ms;
