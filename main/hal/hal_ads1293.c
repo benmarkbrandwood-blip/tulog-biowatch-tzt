@@ -63,12 +63,41 @@ esp_err_t hal_ads1293_read_ecg(int32_t *ch1_out, int32_t *ch2_out, int32_t *ch3_
     return ESP_OK;
 }
 
+/* Dump all writable init registers to the log — called when DRDY never asserts. */
+static void ads1293_dump_regs(void)
+{
+    static const uint8_t k_dump[] = {
+        ADS1293_CONFIG,       ADS1293_FLEX_CH1_CN,  ADS1293_FLEX_CH2_CN,
+        ADS1293_FLEX_CH3_CN,  ADS1293_CMDET_EN,     ADS1293_RLD_CN,
+        ADS1293_OSC_CN,       ADS1293_AFE_RES,      ADS1293_AFE_SHDN_CN,
+        ADS1293_R2_RATE,      ADS1293_R3_RATE_CH1,  ADS1293_R3_RATE_CH2,
+        ADS1293_R3_RATE_CH3,  ADS1293_DRDYB_SRC,    ADS1293_CH_CNFG,
+        ADS1293_DATA_STATUS,  ADS1293_ERROR_STATUS,  ADS1293_REVID,
+    };
+    ESP_LOGE(TAG, "---- ADS1293 register dump (DRDY timeout) ----");
+    for (size_t i = 0; i < sizeof(k_dump); i++) {
+        uint8_t v = 0xFF;
+        hal_ads1293_reg_read(k_dump[i], &v);
+        ESP_LOGE(TAG, "  [0x%02X] = 0x%02X", k_dump[i], v);
+    }
+    ESP_LOGE(TAG, "  DRDY GPIO%d level = %d", PIN_ADS1293_DRDY,
+             gpio_get_level(PIN_ADS1293_DRDY));
+}
+
 esp_err_t hal_ads1293_init(void)
 {
-    /* ── 1. Register SPI device on SPI2 (already initialised by hal_display) ── */
+    /* ── 1. Register SPI device on SPI2 (already initialised by hal_display) ──
+     * Using 500 kHz and Mode 3 for bring-up:
+     *   - 500 kHz gives generous setup/hold margins on signal-integrity issues.
+     *   - Mode 3 (CPOL=1, CPHA=1): clock idle HIGH, data captured on falling SCLK.
+     *     Forum reports for ADS1293 on Arduino specifically cite Mode 3 as the fix
+     *     for DRDY never asserting.  Mode 0 was tried first (REVID reads OK with
+     *     both) but did not produce DRDY.  Mode 3 is equivalent to Mode 1 from the
+     *     device's sampling perspective but with clock idle HIGH, which matches the
+     *     ADS1293 timing diagram more closely when SCLK is shown starting HIGH. */
     spi_device_interface_config_t devcfg = {
-        .clock_speed_hz = 4 * 1000 * 1000,  /* 4 MHz — well below 20 MHz max */
-        .mode           = 0,                  /* CPOL=0, CPHA=0 — confirmed by Protocentral Arduino ref */
+        .clock_speed_hz = 500 * 1000,  /* 500 kHz — conservative for bring-up */
+        .mode           = 3,            /* CPOL=1, CPHA=1 — forum-reported fix */
         .spics_io_num   = PIN_ADS1293_CS,
         .queue_size     = 1,
     };
@@ -88,15 +117,15 @@ esp_err_t hal_ads1293_init(void)
     };
     gpio_config(&io);
 
-    /* ── 3. Soft-stop any running conversion (also resets START_CON) ──────── */
+    /* ── 3. Soft-stop any running conversion ─────────────────────────────── */
     err = hal_ads1293_reg_write(ADS1293_CONFIG, ADS1293_CONFIG_STOP);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "CONFIG stop write failed: %s", esp_err_to_name(err));
         return err;
     }
-    vTaskDelay(pdMS_TO_TICKS(2));  /* allow ADC pipeline to flush */
+    vTaskDelay(pdMS_TO_TICKS(5));
 
-    /* ── 4. Verify REVID ──────────────────────────────────────────────────── */
+    /* ── 4. Verify REVID — confirms SPI wiring and mode are functional ───── */
     uint8_t revid = 0;
     err = hal_ads1293_reg_read(ADS1293_REVID, &revid);
     if (err != ESP_OK) {
@@ -104,46 +133,62 @@ esp_err_t hal_ads1293_init(void)
         return err;
     }
     if (revid != ADS1293_REVID_EXPECTED) {
-        ESP_LOGE(TAG, "REVID=0x%02X expected 0x%02X — chip absent or SPI wiring error",
+        ESP_LOGE(TAG, "REVID=0x%02X expected 0x%02X — SPI mode/wiring error",
                  revid, ADS1293_REVID_EXPECTED);
         return ESP_ERR_NOT_FOUND;
     }
-    ESP_LOGI(TAG, "REVID OK (0x%02X)", revid);
+    ESP_LOGI(TAG, "REVID OK (0x%02X) — SPI Mode 3 @ 500 kHz confirmed", revid);
 
-    /* ── 5. Two-lead ECG configuration (TI datasheet §9.2.1 sequence) ──────
+    /* ── 5. 3-lead ECG configuration with write-readback verification ───────
      *
-     * Leads: CH1 = Lead I  (LA–RA): INP=IN2, INN=IN1
-     *        CH2 = Lead II (LL–RA): INP=IN3, INN=IN1
-     *
-     * ODR = fs / (R1 × R2 × R3)
-     *     = 102400 / (4 × 5 × 6) ≈ 853 SPS per channel.
-     * ecg_sampler_task polls at 100 Hz and reads the latest sample each tick.
-     *
-     * OSC_CN=0x00: internal RC oscillator (no external crystal required).
-     * To use an external 4.096 MHz crystal, change OSC_CN to 0x04. */
+     * Leads: CH1=Lead I (LA−RA), CH2=Lead II (LL−RA), CH3=Lead III (LL−LA)
+     * ODR = 102400 / (R1×R2×R3) = 102400 / (4×5×6) ≈ 853 SPS per channel */
     static const uint8_t k_init[][2] = {
         { ADS1293_FLEX_CH1_CN,  0x11 },  /* CH1: Lead I  — INP=IN2(LA), INN=IN1(RA) */
         { ADS1293_FLEX_CH2_CN,  0x19 },  /* CH2: Lead II — INP=IN3(LL), INN=IN1(RA) */
         { ADS1293_FLEX_CH3_CN,  0x13 },  /* CH3: Lead III— INP=IN3(LL), INN=IN2(LA) */
         { ADS1293_CMDET_EN,     0x07 },  /* CM detect on IN1, IN2, IN3 */
         { ADS1293_RLD_CN,       0x04 },  /* RLD amp output → IN4 */
-        { ADS1293_OSC_CN,       ADS1293_OSC_INTERNAL },  /* 0x04: feed RC osc to digital */
-        { ADS1293_AFE_SHDN_CN,  0x00 },  /* all AFE channels active — confirmed by Protocentral ref */
-        { ADS1293_R2_RATE,      0x02 },  /* R2 = 5 */
-        { ADS1293_R3_RATE_CH1,  0x02 },  /* R3 = 6 → ~853 SPS, CH1 */
-        { ADS1293_R3_RATE_CH2,  0x02 },  /* R3 = 6 → ~853 SPS, CH2 */
-        { ADS1293_R3_RATE_CH3,  0x02 },  /* R3 = 6 → ~853 SPS, CH3 */
+        { ADS1293_OSC_CN,       ADS1293_OSC_INTERNAL },  /* 0x04: CLKFED — RC osc → digital */
+        { ADS1293_AFE_SHDN_CN,  0x00 },  /* all AFE channels active (0x24 was wrong) */
+        { ADS1293_R2_RATE,      0x02 },  /* R2=5 */
+        { ADS1293_R3_RATE_CH1,  0x02 },  /* R3=6 → ~853 SPS CH1 */
+        { ADS1293_R3_RATE_CH2,  0x02 },  /* R3=6 → ~853 SPS CH2 */
+        { ADS1293_R3_RATE_CH3,  0x02 },  /* R3=6 → ~853 SPS CH3 */
         { ADS1293_DRDYB_SRC,    ADS1293_DRDYB_CH1_ECG },  /* 0x08: CH1 ECG drives DRDYB */
-        { ADS1293_CH_CNFG,      ADS1293_CHCNFG_E1_EN | ADS1293_CHCNFG_E2_EN | ADS1293_CHCNFG_E3_EN },  /* 0x70 */
+        { ADS1293_CH_CNFG,      ADS1293_CHCNFG_E1_EN | ADS1293_CHCNFG_E2_EN | ADS1293_CHCNFG_E3_EN },
     };
 
+    uint8_t readback = 0;
+    bool rb_fail = false;
     for (size_t i = 0; i < sizeof(k_init) / sizeof(k_init[0]); i++) {
-        err = hal_ads1293_reg_write(k_init[i][0], k_init[i][1]);
+        uint8_t reg = k_init[i][0];
+        uint8_t val = k_init[i][1];
+
+        err = hal_ads1293_reg_write(reg, val);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Init reg 0x%02X write failed: %s",
-                     k_init[i][0], esp_err_to_name(err));
+            ESP_LOGE(TAG, "Write reg 0x%02X failed: %s", reg, esp_err_to_name(err));
             return err;
         }
+
+        /* Read back immediately to confirm the write landed. */
+        err = hal_ads1293_reg_read(reg, &readback);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Readback reg 0x%02X failed: %s", reg, esp_err_to_name(err));
+            return err;
+        }
+        if (readback != val) {
+            ESP_LOGE(TAG, "Readback MISMATCH reg 0x%02X: wrote 0x%02X read 0x%02X",
+                     reg, val, readback);
+            rb_fail = true;
+        } else {
+            ESP_LOGI(TAG, "  reg 0x%02X = 0x%02X OK", reg, val);
+        }
+    }
+
+    if (rb_fail) {
+        ESP_LOGE(TAG, "Register write verification failed — check SPI mode/wiring");
+        return ESP_ERR_INVALID_RESPONSE;
     }
 
     /* ── 6. Start conversion ──────────────────────────────────────────────── */
@@ -152,8 +197,25 @@ esp_err_t hal_ads1293_init(void)
         ESP_LOGE(TAG, "CONFIG start write failed: %s", esp_err_to_name(err));
         return err;
     }
+    ESP_LOGI(TAG, "Conversion started (CONFIG=0x01) — polling DRDY...");
 
-    ESP_LOGI(TAG, "Init OK — 3-lead ECG, ~853 SPS, internal RC osc, DRDY=GPIO%d CS=GPIO%d",
+    /* ── 7. DRDY diagnostic poll — wait up to 500 ms ────────────────────────
+     * At ~853 SPS the first sample should appear within 2 ms.
+     * If DRDY is still HIGH after 500 ms the init sequence is wrong; dump regs. */
+    for (int ms = 0; ms < 500; ms++) {
+        if (gpio_get_level(PIN_ADS1293_DRDY) == 0) {
+            ESP_LOGI(TAG, "DRDY asserted after %d ms — ADS1293 running", ms);
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+        if (ms == 499) {
+            ESP_LOGE(TAG, "DRDY still HIGH after 500 ms — conversion not started");
+            ads1293_dump_regs();
+            return ESP_ERR_TIMEOUT;
+        }
+    }
+
+    ESP_LOGI(TAG, "Init OK — 3-lead ECG ~853 SPS, SPI Mode 3 500 kHz, DRDY=GPIO%d CS=GPIO%d",
              PIN_ADS1293_DRDY, PIN_ADS1293_CS);
     return ESP_OK;
 }
