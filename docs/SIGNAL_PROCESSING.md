@@ -21,12 +21,13 @@ This single-clock model is critical for PAT accuracy: both the ECG R-peak timest
 
 ### 1.2 Sampling rate
 
-| Channel | Stage 1 | Stage 2 target |
+| Channel | Current status | Stage 2 target |
 | - | - | - |
-| ECG | 100 Hz (simulated) | 1000 Hz via ADS127L18 |
-| PPG | 100 Hz (simulated, beat-synchronised) | 100–400 Hz via MAX86140 |
-| RESP / NAS / ERB | 100 Hz (sine placeholders) | 50–100 Hz via ADS127L18 |
-| FCG | 100 Hz (sine placeholder) | 1000 Hz via ADS127L18 |
+| ECG (3-lead) | 100 Hz read rate; ADS1293 @ ~853 SPS hardware (§2.7) | 1000 Hz via ADS1293 at higher ODR |
+| PPG (IR + Red) | 100 Hz read rate; MAX30102 @ 100 SPS hardware (§3.6) | 100–400 Hz via MAX30102 or MAX86140 |
+| SpO₂ | ~4 s update period; MAX30102 Welford accumulator (§5.4) | Continuous, same sensor |
+| RESP / NAS / ERB | 100 Hz (sine placeholders) | 50–100 Hz via ADS1293 ch4/5 |
+| FCG | 100 Hz (sine placeholder) | 1000 Hz via ADS1293 |
 
 
 
@@ -78,6 +79,28 @@ The combined 10–15 Hz passband targets the dominant QRS energy. Filter states 
 ### 2.3 QRS detection — Pan-Tompkins pipeline
 
 After bandpass filtering, each sample follows:
+
+**Step 0 — Post-bandpass gain**
+
+The ADS1293 24-bit values are right-shifted by 12 before entering this pipeline, leaving only ±1–12 counts of AC amplitude in the body-surface ECG after integer truncation. With such a small signal, the squared derivative in Step 2 produces MWI values well below the adaptive threshold floor, and QRS detection never fires.
+
+A gain multiplier is applied to the bandpassed signal before differentiation:
+
+```c
+band *= ECG_QRS_GAIN;   /* default 100.0f — defined in app_config.h */
+```
+
+Because the gain is applied before squaring, the MWI scales by `ECG_QRS_GAIN²` (10 000×). A 3-count QRS at 12-bit (typical for body-surface ECG via ADS1293 at default gain settings) produces MWI ≈ 300–1 000, comfortably above the initial threshold of 120 on the first beat. The adaptive signal/noise tracker (Step 5 below) self-calibrates thereafter.
+
+The `s_ecg_band[]` ring buffer stores the gained value; the R-peak backward search (§2.4) uses this buffer for its argmax, so scale does not affect the search outcome — only relative magnitude within the window matters.
+
+**Tuning `ECG_QRS_GAIN`:**
+
+| Symptom | Action |
+|---|---|
+| HR reads `--` with electrodes on skin | Raise toward 200 |
+| False beats / erratic HR on baseline noise | Lower toward 20–50 |
+| Works on first touch but drifts | Gain is fine — check electrode impedance |
 
 **Step 1 — Differentiation**
 
@@ -212,6 +235,54 @@ Valid range: `RESP_MIN_BPM`–`RESP_MAX_BPM` = 4–60 BPM.
 > **Stage 2 note**: the nasal thermistor (NTC on ADS127L18 ch3) and ERB chest band (ch4) will provide direct respiratory signals. The intersection-counting algorithm will be applied to those channels; the ECG-derived respiration estimate may be retained as a fallback.
 
 
+### 2.7 ADS1293 3-lead ECG acquisition (hardware)
+
+The ADS1293 is a 3-channel ECG analogue front-end with an integrated sigma-delta ADC, connected to the ESP32 via SPI2 (CS GPIO16) in Mode 3 (CPOL=1, CPHA=1) at 4 MHz. The driver is in [main/hal/hal_ads1293.c](main/hal/hal_ads1293.c); acquisition is orchestrated by [main/services/svc_biosignal_acq.c](main/services/svc_biosignal_acq.c).
+
+**Register configuration:**
+
+| Register | Value | Effect |
+| - | - | - |
+| FLEX_CH1_CN | 0x19 | CH1 = ECG Lead I (IN1− / IN2+) |
+| FLEX_CH2_CN | 0x2A | CH2 = ECG Lead II (IN1− / IN3+) |
+| FLEX_CH3_CN | 0x0B | CH3 = ECG Lead III (IN2− / IN3+) |
+| R1_RATE | R1 = 4 | First-stage decimation |
+| R2_RATE | 0x02 → R2 = 5 | Second-stage decimation |
+| R3_RATE | 0x02 → R3 = 6 | Output decimation |
+| Effective ODR | ≈ 853 SPS | 102 400 / (4 × 5 × 6) |
+| DRDYB | GPIO4 (open-drain) | Data-ready signal |
+
+**DATA_LOOP burst read:**
+
+`hal_ads1293_read_ecg()` sends opcode 0x08 (DATA_LOOP) followed by 10 dummy bytes. The chip returns: 1 byte DATA_STATUS + 3 bytes CH1 + 3 bytes CH2 + 3 bytes CH3. Each channel value is a signed 24-bit two's-complement integer, sign-extended to `int32_t`.
+
+**Acquisition path:**
+
+`svc_biosignal_acq_step_100hz()` calls `hal_ads1293_read_ecg()` unconditionally at 100 Hz. Because the ADS1293 runs at ~853 SPS, there is always at least one unconsumed sample per 10 ms call. Results are published to `biosignal_frame_t.ecg1_raw/ecg2_raw/ecg3_raw` under a mutex.
+
+`ecg_sampler_task` in `main.c` reads the frame and routes `ecg1_raw` (Lead I) through the bandpass and Pan-Tompkins QRS pipeline (§2.2–§2.6). `ecg2_raw` (Lead II) and `ecg3_raw` (Lead III) bypass the QRS pipeline and are written directly to the CSV.
+
+**DRDY note (F0 fix — confirmed):**
+
+The DRDYB open-drain pin on GPIO4 has no external pull-up resistor (R17 was removed with the RGB LED footprint). The internal ~45 kΩ pull-up cannot cleanly resolve the brief DRDYB pulse at 853 SPS: the GPIO ISR was firing at ~853 Hz but the flag it set was often not consumed before the next pulse. The ISR has been removed entirely — GPIO4 is configured as a plain input with `GPIO_INTR_DISABLE` and `hal_ads1293_data_ready()` performs a direct `gpio_get_level()` check. Reads in `svc_biosignal_acq_step_100hz()` are unconditional at 100 Hz; at 853 SPS the chip always has a fresh sample ready.
+
+**SPI2 bus gate (F3 fix — confirmed):**
+
+ADS1293 shares SPI2 with the ILI9341 display DMA. Simultaneous blocking transmit from `hal_ads1293_read_ecg()` (Core 0) and async DMA from `esp_lcd_panel_draw_bitmap()` (Core 1) deadlock the ESP-IDF SPI arbitrator. A binary semaphore `s_spi2_gate` (in `hal_display.c`) serialises all SPI2 access: `hal_ads1293_read_ecg()` takes it with `portMAX_DELAY` (biosensor priority), and the display flush skips the chunk with a `timeout=0` try-take if the gate is held. The gate is released from the DMA-done ISR via `xSemaphoreGiveFromISR()`.
+
+**Higher sample rates for BP recording:**
+
+The ODR constants in [main/hal/hal_ads1293_regs.h](main/hal/hal_ads1293_regs.h) define alternative R2/R3 rate values:
+
+| Config | R2 | R3 | ODR |
+| - | - | - | - |
+| ECG record (current) | 5 | 6 | 853 SPS |
+| BP / PTT mode | 4 | 6 | 1067 SPS |
+| High-resolution | 5 | 4 | 1280 SPS |
+
+The BP screen `bp_sampler_task` will require architectural changes to call `hal_ads1293_read_ecg()` directly at 1 kHz rather than reading from the 100 Hz ring buffer — this is Phase 4 work.
+
+
 ## 3. PPG Processing Pipeline
 
 ### 3.1 Two-Gaussian waveform model (Stage 1 simulation)
@@ -304,6 +375,48 @@ y = (ppg[i] − ppg_min) × 1000 / (ppg_max − ppg_min + 1)
 ```
 
 This mirrors the ECG chart normalisation exactly. Both `s_ppg_min` and `s_ppg_max` are tracked per-sample under spinlock in `ecg_sampler_task` and reset every `ECG_WINDOW_SAMPLES × 4` = 1600 samples (~16 s). The autoscale adapts to any sensor amplitude range, from the simulated 80–920 counts to MAX86140's 19-bit values, without code changes.
+
+
+### 3.6 MAX30102 hardware PPG acquisition
+
+The MAX30102 is an integrated pulse oximetry and heart-rate sensor connected via I²C at address 0x57. The driver is in [main/hal/hal_max30102.c](main/hal/hal_max30102.c).
+
+**Register configuration:**
+
+| Setting | Register | Value | Effect |
+| - | - | - | - |
+| Mode | 0x09 | 0x03 | SpO₂ mode — Red and IR LEDs both active |
+| FIFO config | 0x08 | 0x10 | No sample averaging; FIFO rollover enabled |
+| ADC range | 0x0A [6:5] | 01 | 4096 nA full-scale |
+| Sample rate | 0x0A [4:2] | 001 | 100 SPS |
+| Pulse width | 0x0A [1:0] | 11 | 411 µs → 18-bit ADC (0–262 143) |
+| LED1 (Red) current | 0x0C | 0x24 | 7.2 mA |
+| LED2 (IR) current | 0x0D | 0x24 | 7.2 mA |
+
+`hal_max30102_init()` verifies the Part ID register (0xFF = 0x15), issues a soft reset, applies the above configuration, and clears the FIFO pointers.
+
+**FIFO read (`hal_max30102_read_fifo`):**
+
+1. Read `FIFO_WR_PTR` (0x04) and `FIFO_RD_PTR` (0x06); compute `n_avail = (wr_ptr − rd_ptr) & 0x1F`.
+2. If `n_avail == 0` return `ESP_ERR_NOT_FOUND` (no new data since last call).
+3. Cap drain at 4 samples to bound the I²C transaction to 24 bytes.
+4. Burst-read `n_avail × 6` bytes starting at FIFO_DATA (0x07). SpO₂ mode byte order per sample: Red [23:16] [15:8] [7:0] then IR [23:16] [15:8] [7:0] (18 significant bits; bits 17–16 in byte 0/3 at positions [1:0]).
+5. Feed every sample to the SpO₂ accumulator (§5.4).
+6. Return the most recent (last) IR and Red values.
+
+**Integration into the signal chain:**
+
+`svc_biosignal_acq_step_100hz()` calls `hal_max30102_read_fifo()` and publishes `ppg_ir_raw` / `ppg_red_raw` to `biosignal_frame_t` under the acquisition mutex. In `ecg_sampler_task`, `s_ppg_ir_latest` is updated from the frame when `BIOSIG_VALID_PPG_IR` is set.
+
+The PPG source is selected at runtime:
+
+```c
+int32_t ppg_raw = (s_ppg_ir_latest > 0)
+                  ? s_ppg_ir_latest
+                  : (int32_t)ppg_sim_get_sample(expected_ms);
+```
+
+The IR sample feeds through the existing `signal_bandpass_step()` (0.5–16 Hz), foot detector (`ppg_det_update_sample()`), chart display, and CSV — all of which are amplitude-agnostic and require no changes for the 18-bit sensor range.
 
 
 ## 4. Pulse Arrival Time (PAT)
@@ -427,16 +540,36 @@ FCG channels are stored as `int16_t` in `rec_row_t` (±32,767). ADS127L18 24-bit
 
 PEP extraction from FCG involves detecting the onset of the low-frequency cardiomechanical signal relative to the ECG Q-wave. This algorithm is not yet implemented.
 
-### 5.4 SpO₂ — MAX86140
+### 5.4 SpO₂ — MAX30102 (implemented)
 
-SpO₂ is derived from the ratio of red to infrared (IR) photoplethysmographic signals:
+SpO₂ is derived from the ratio of AC-to-DC components of the Red and IR optical signals. The algorithm runs entirely inside `hal_max30102.c` using a Welford online variance accumulator over a 400-sample (≈ 4 s) window.
+
+**Algorithm:**
 
 ```
-R = (AC_red / DC_red) / (AC_IR / DC_IR)  
-SpO₂ ≈ a − b × R    (empirical calibration, typically a ≈ 110, b ≈ 25)
+For each sample (red[n], ir[n]) — Welford online update:
+    s_n++
+    dr = red[n] − red_mean;   red_mean += dr / s_n;   red_M2 += dr × (red[n] − red_mean)
+    di = ir[n]  − ir_mean;    ir_mean  += di / s_n;   ir_M2  += di × (ir[n]  − ir_mean)
+
+After SPO2_WINDOW = 400 samples:
+    AC_red = sqrt(red_M2 / n)      -- std deviation ≈ AC component
+    AC_ir  = sqrt(ir_M2  / n)
+    R = (AC_red / DC_red) / (AC_ir / DC_ir)     where DC_red = red_mean, DC_ir = ir_mean
+    SpO₂ = −45.060 × R² + 30.354 × R + 94.845  (% saturation)
 ```
 
-The `spo2` field in `rec_row_t` is `uint8_t` (percentage 0–100) and the topbar label `s_lbl_rec_spo2` is already present and initialised to "SpO2 --%". Wiring in the real value requires computing the AC and DC components from the MAX86140 FIFO and writing the result to `row.spo2`.
+The Welford algorithm accumulates the sum of squared deviations (`M2`) in a single pass without storing the sample history, giving a numerically stable variance estimate. The standard deviation (square root of M2/n) is equivalent to the RMS AC amplitude used in the classic ratio-of-ratios formula.
+
+The quadratic SpO₂–R calibration curve (`−45.060·R² + 30.354·R + 94.845`) is derived from the empirical relationship in the Maxim Integrated reference design (AN6409). For the physiological R range of 0.4–1.0 this approximates the Beer-Lambert relationship between haemoglobin absorption ratios and arterial oxygen saturation.
+
+**Validity gate:**
+
+SpO₂ is set to 0 when either `DC_red` or `DC_ir` is below `SPO2_MIN_DC = 5000` ADC counts (no finger on sensor or inadequate perfusion). Out-of-range results (< 50 % or > 100 %) are clamped to 0 or 100 respectively.
+
+**Output:**
+
+Updated approximately every 4 s (once per 400-sample window). The result is published via `hal_max30102_get_spo2()` and written to `rec_row_t.spo2` (`uint8_t`, 0–100 %) in the CSV. The topbar label `s_lbl_rec_spo2` currently shows "--%" and is not yet wired to the live value — this is a pending UI task.
 
 
 ## 6. Data Recording Format
@@ -446,15 +579,17 @@ The `spo2` field in `rec_row_t` is `uint8_t` (percentage 0–100) and the topbar
 | Column | Type | Units | Description |
 | - | - | - | - |
 | `time_ms` | uint32 | ms | Recording elapsed time from `svc_rec_start()` |
-| `ecg` | int32 | ADC counts | Raw ECG sample (12-bit sim; 24-bit ADS127L18 in Stage 2) |
-| `ppg` | int32 | ADC counts | Raw PPG sample (simulated; 19-bit MAX86140 in Stage 2) |
+| `ecg` | int32 | ADC counts | ECG Lead I — ADS1293 CH1 (24-bit); simulated P-QRS-T when sensor absent |
+| `ecg2` | int32 | ADC counts | ECG Lead II — ADS1293 CH2 (24-bit); 0 when sensor absent |
+| `ecg3` | int32 | ADC counts | ECG Lead III — ADS1293 CH3 (24-bit); 0 when sensor absent |
+| `ppg` | int32 | ADC counts | PPG IR — MAX30102 (18-bit, 0–262143); simulated two-Gaussian when sensor absent |
 | `resp` | int16 | ADC counts | Respiratory signal (simulated sine; ERB/NAS in Stage 2) |
 | `nas` | int16 | ADC counts | Nasal thermistor (simulated; ADS127L18 ch3 in Stage 2) |
 | `fcg1` | int16 | ADC counts | FCG channel 1 (simulated; ADS127L18 ch0 in Stage 2) |
 | `fcg2` | int16 | ADC counts | FCG channel 2 (simulated; ADS127L18 ch1 in Stage 2) |
 | `drift_ms` | int32 | ms | `actual_ms − expected_ms` cumulative wall-clock jitter |
-| `batt_v` | float | V | Battery voltage from AXP2101 |
-| `spo2` | uint8 | % | SpO₂ (always 0 in Stage 1) |
+| `batt_pct` | uint8 | % | Battery percent — always 255 (IP5306 has no I²C/ADC path to ESP32) |
+| `spo2` | uint8 | % | SpO₂ — MAX30102 Welford estimate (0–100 %); 0 if no finger or < 400-sample window elapsed |
 | `resp_rate` | uint8 | BPM | Estimated respiration rate |
 | `hr_bpm` | uint8 | BPM | Estimated heart rate |
 | `rr_ms` | int16 | ms | RR interval (refined R-peak to refined R-peak); 0 between beats |
@@ -497,4 +632,10 @@ jitter_ms = df['drift_ms'].diff()  # per-sample deviation from 10 ms ideal
 - Allen, J. (2007). Photoplethysmography and its application in clinical physiological measurement. *Physiological Measurement*, 28(3), R1–R39.
 
 - Pinheiro, N. *et al.* (2010). Can PTT be used to measure blood pressure? *The Proceedings of World Congress on Medical Physics and Biomedical Engineering*, 491–494.
+
+- Maxim Integrated (2018). *MAX30102 High-Sensitivity Pulse Oximeter and Heart-Rate Sensor for Wearable Health*, datasheet Rev 3.
+
+- Maxim Integrated (2018). *Recommended Configurations and Operating Profiles for MAX30101/MAX30102 EV Kits*, Application Note 6409.
+
+- Texas Instruments (2013). *ADS1293: Low-Power, 3-Channel, 24-Bit Analog Front-End for Biopotential Measurements*, datasheet SBAS615B.
 

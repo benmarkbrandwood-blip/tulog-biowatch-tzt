@@ -89,7 +89,7 @@
 /* -------------------------------------------------------------------------- */
 
 #define DEFAULT_BRIGHTNESS          50
-#define DEFAULT_TIMEOUT_S           30
+#define DEFAULT_TIMEOUT_S           600
 
 #define DISPLAY_LOCK_SLICE_MS       50
 #define DISPLAY_LOCK_UI_TIMEOUT_MS  3000
@@ -148,6 +148,13 @@
 #define ECG_MWI_WINDOW_MS        150
 #define ECG_MWI_SAMPLES          ((ECG_SAMPLE_HZ * ECG_MWI_WINDOW_MS) / 1000)
 #define ECG_MIN_THRESHOLD_FLOOR  25.0f
+
+/* Post-bandpass gain applied before the differentiate-square-MWI chain.
+ * The ADS1293 24-bit values are shifted >> 12 to the pipeline's 12-bit range,
+ * leaving only ±2–5 counts of AC variation on the pipeline signal.
+ * Gain × 100 scales MWI by gain² so QRS complexes clear the initial 120.0 threshold.
+ * The adaptive tracker self-calibrates after the first beat. */
+#define ECG_QRS_GAIN             100.0f
 
 /* R-peak search window around the MWI detection point.
  * After MWI fires, the sampler waits FORWARD_SAMPLES ticks so the true R-peak
@@ -293,3 +300,5 @@
 /* I2C device addresses */
 #define I2C_ADDR_MAX30102   0x57
 #define I2C_ADDR_MPU6050    0x68   /* AD0 low; use 0x69 when AD0 tied high */
+
+/* -------------------------------------------------------------------------- */

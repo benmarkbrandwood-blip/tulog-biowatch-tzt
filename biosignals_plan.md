@@ -369,6 +369,23 @@ Modify:
 
 ### ADS1220 implementation detail
 
+**SPI2 bus priority — mandatory for all ADS1220 SPI transfers:**
+ADS1220 shares SPI2 with the ILI9341 display DMA.  The display flush (core 1) and any
+biosensor blocking transmit (core 0) deadlock if they run simultaneously — this was
+confirmed and fixed for ADS1293 (F3 fix, 2026-06-14).  ADS1220 must use the same gate:
+
+```c
+SemaphoreHandle_t gate = hal_display_get_spi2_gate();
+if (gate) xSemaphoreTake(gate, portMAX_DELAY);   /* biosensor has absolute priority */
+esp_err_t err = hal_spi_txrx(s_spi, tx, rx, len);
+if (gate) xSemaphoreGive(gate);
+```
+
+Apply this pattern in `hal_ads1220_read_raw()` and any other `hal_spi_txrx()` call in
+the ADS1220 driver.  The display flush skips a chunk with a non-blocking try-take
+(`timeout=0`) if the gate is held — the dirty area redraws in the next LVGL cycle
+(~50 ms), which is imperceptible.
+
 Driver functions should include:
 
 ```c

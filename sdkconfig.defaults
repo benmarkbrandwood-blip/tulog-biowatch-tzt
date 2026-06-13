@@ -77,3 +77,11 @@ CONFIG_VFS_SUPPORT_TERMIOS=y
 # ── LWIP / SNTP ──────────────────────────────────────────────────────────────
 CONFIG_LWIP_SNTP_MAX_SERVERS=1
 CONFIG_LWIP_SNTP_UPDATE_DELAY=15000
+
+# ── Task Watchdog (for CRASH_DIAG) ───────────────────────────────────────────
+# Panic + backtrace when a subscribed task hasn't reset the WDT in 8 s.
+# LVGL task and ecg_sampler_task are subscribed via esp_task_wdt_add(NULL)
+# inside their task functions under #if CRASH_DIAG. Remove when crash is solved.
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=8

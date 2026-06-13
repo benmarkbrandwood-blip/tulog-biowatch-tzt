@@ -24,7 +24,9 @@
 /* 320 × 16 × 2 = 10 240 bytes per buffer; two buffers = 20 480 bytes total.
  * No rotation buffer needed — orientation is handled by hardware MADCTL. */
 #define LVGL_DRAW_BUF_LINES  16
-#define LVGL_TASK_STACK      8192
+/* Stack set to 12288 — HWM monitoring showed ~4900 bytes used under peak load
+ * (Files screen + 3-lead chart).  The original 8192 left only ~800 bytes headroom. */
+#define LVGL_TASK_STACK      12288
 #define LVGL_TASK_PRIORITY   4
 
 /* Bytes per pixel for RGB565 (display native format at LV_COLOR_DEPTH=16). */
@@ -38,6 +40,10 @@ static SemaphoreHandle_t         s_lvgl_mutex = NULL;
 static esp_lcd_panel_handle_t    s_panel      = NULL;
 static esp_lcd_panel_io_handle_t s_io_handle  = NULL;  /* kept for explicit MADCTL writes */
 static lv_display_t             *s_disp       = NULL;
+static TaskHandle_t              s_lvgl_task  = NULL;
+/* SPI2 gate semaphore — prevents ADS1293 blocking transmit (core 0) from
+ * overlapping the display DMA flush (core 1).  See hal_display_get_spi2_gate(). */
+static SemaphoreHandle_t         s_spi2_gate  = NULL;
 
 /* ── DMA-done callback (called from ISR) ────────────────────────────────── */
 
@@ -48,8 +54,15 @@ static bool IRAM_ATTR on_trans_done(esp_lcd_panel_io_handle_t panel_io,
     (void)panel_io;
     (void)edata;
     (void)user_ctx;
+    BaseType_t woken = pdFALSE;
+    /* Release the SPI2 gate BEFORE signalling LVGL so the ECG task can
+     * immediately use SPI2 for the next ADS1293 read without waiting for
+     * LVGL to start its next render chunk. */
+    if (s_spi2_gate) xSemaphoreGiveFromISR(s_spi2_gate, &woken);
     if (s_disp) lv_display_flush_ready(s_disp);
-    return false;
+    /* Return true to tell the SPI driver to yield if a higher-priority task
+     * (e.g. ecg_sampler_task, priority 8) was woken by the semaphore give. */
+    return woken == pdTRUE;
 }
 
 /* ── Tick source ─────────────────────────────────────────────────────────── */
@@ -68,11 +81,24 @@ static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
                       * (uint32_t)(area->y2 - area->y1 + 1);
     lv_draw_sw_rgb565_swap(px_map, px_count);
 
-    esp_lcd_panel_draw_bitmap(s_panel,
-                              area->x1, area->y1,
-                              area->x2 + 1, area->y2 + 1,
-                              px_map);
-    /* lv_display_flush_ready() is called from on_trans_done ISR after DMA. */
+    /* Biosensor priority: try to take the SPI2 gate without waiting.
+     * If the gate is held by a biosensor task (ADS1293/ADS1220), this chunk
+     * is skipped — lv_display_flush_ready() is called immediately so LVGL
+     * keeps moving.  The dirty area will be redrawn in the next render cycle
+     * (~50 ms), which is imperceptible.  This gives biosensor reads absolute
+     * priority over display flushes on SPI2, preventing sample loss. */
+    if (s_spi2_gate) {
+        if (xSemaphoreTake(s_spi2_gate, 0) == pdFALSE) {
+            /* Gate busy — biosensor read in progress.  Skip this flush chunk. */
+            lv_display_flush_ready(disp);
+            return;
+        }
+    }
+    esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel,
+                      area->x1, area->y1, area->x2 + 1, area->y2 + 1, px_map);
+    /* lv_display_flush_ready() is called from on_trans_done ISR after DMA.
+     * If draw_bitmap failed, release the gate here to avoid deadlock. */
+    if (err != ESP_OK && s_spi2_gate) xSemaphoreGive(s_spi2_gate);
 }
 
 /* ── LVGL task ───────────────────────────────────────────────────────────── */
@@ -199,11 +225,17 @@ void hal_display_init(void)
     }
     lv_display_set_buffers(s_disp, buf1, buf2, buf_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
-    /* 7. LVGL mutex + task (pinned to UI_AUX_CORE, same core as clock/button tasks) */
+    /* 7. SPI2 gate semaphore — serialises display DMA and ADS1293 blocking transmit.
+     *    Created as binary semaphore and given immediately (gate starts open). */
+    s_spi2_gate = xSemaphoreCreateBinary();
+    configASSERT(s_spi2_gate);
+    xSemaphoreGive(s_spi2_gate);
+
+    /* 8. LVGL mutex + task (pinned to UI_AUX_CORE, same core as clock/button tasks) */
     s_lvgl_mutex = xSemaphoreCreateMutex();
     configASSERT(s_lvgl_mutex);
     xTaskCreatePinnedToCore(lvgl_task, "lvgl", LVGL_TASK_STACK, NULL,
-                            LVGL_TASK_PRIORITY, NULL, UI_AUX_CORE);
+                            LVGL_TASK_PRIORITY, &s_lvgl_task, UI_AUX_CORE);
 
     ESP_LOGI(TAG, "Init OK — ILI9341 %d×%d, 2×%u-byte draw buffers",
              LCD_H_RES, LCD_V_RES, (unsigned)buf_bytes);
@@ -240,4 +272,14 @@ bool hal_display_lock(uint32_t total_timeout_ms,
 
     ESP_LOGW(TAG, "%s: failed to acquire display lock after %u ms", who, total_timeout_ms);
     return false;
+}
+
+TaskHandle_t hal_display_get_lvgl_task(void)
+{
+    return s_lvgl_task;
+}
+
+SemaphoreHandle_t hal_display_get_spi2_gate(void)
+{
+    return s_spi2_gate;
 }

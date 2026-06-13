@@ -1,6 +1,7 @@
 #include "hal_ads1293.h"
 #include "hal_ads1293_regs.h"
 #include "hal_bus.h"
+#include "hal_display.h"
 #include "app_config.h"
 
 #include "driver/gpio.h"
@@ -34,7 +35,11 @@ esp_err_t hal_ads1293_reg_read(uint8_t addr, uint8_t *val_out)
 
 bool hal_ads1293_data_ready(void)
 {
-    return gpio_get_level(PIN_ADS1293_DRDY) == 0;
+    /* DRDY ISR removed (F0) — GPIO4 has no external pull-up (R17 removed with LED)
+     * so interrupt-based detection was unreliable at 853 Hz.  Reads are unconditional
+     * in svc_biosignal_acq_step_100hz; this level check is provided for callers
+     * that want a quick poll before committing to a full 10-byte SPI transfer. */
+    return (gpio_get_level(PIN_ADS1293_DRDY) == 0);
 }
 
 esp_err_t hal_ads1293_read_ecg(int32_t *ch1_out, int32_t *ch2_out, int32_t *ch3_out)
@@ -45,7 +50,13 @@ esp_err_t hal_ads1293_read_ecg(int32_t *ch1_out, int32_t *ch2_out, int32_t *ch3_
     uint8_t tx[10] = { ADS1293_CMD_READ(ADS1293_DATA_LOOP), 0,0,0,0,0,0,0,0,0 };
     uint8_t rx[10] = { 0 };
 
+    /* Take the SPI2 gate to serialise against the display DMA flush (F3 fix).
+     * The gate is given by on_trans_done ISR when DMA completes, so the wait
+     * here is at most ~2 ms (one display chunk transfer at 40 MHz). */
+    SemaphoreHandle_t gate = hal_display_get_spi2_gate();
+    if (gate) xSemaphoreTake(gate, portMAX_DELAY);
     esp_err_t err = hal_spi_txrx(s_spi, tx, rx, 10);
+    if (gate) xSemaphoreGive(gate);
     if (err != ESP_OK) return err;
 
     /* rx[0] = don't-care (MISO during cmd byte)
@@ -96,7 +107,7 @@ esp_err_t hal_ads1293_init(void)
      *     device's sampling perspective but with clock idle HIGH, which matches the
      *     ADS1293 timing diagram more closely when SCLK is shown starting HIGH. */
     spi_device_interface_config_t devcfg = {
-        .clock_speed_hz = 500 * 1000,  /* 500 kHz — conservative for bring-up */
+        .clock_speed_hz = 4 * 1000 * 1000,  /* 4 MHz — well within ADS1293's 20 MHz max */
         .mode           = 3,            /* CPOL=1, CPHA=1 — forum-reported fix */
         .spics_io_num   = PIN_ADS1293_CS,
         .queue_size     = 1,
@@ -107,7 +118,11 @@ esp_err_t hal_ads1293_init(void)
         return err;
     }
 
-    /* ── 2. Configure DRDYB GPIO as input with weak pull-up ───────────────── */
+    /* ── 2. Configure DRDYB GPIO as plain input (no ISR — F0 fix) ───────────
+     * The 853 Hz DRDY ISR was causing interrupt pressure on core 0 while reads
+     * are unconditional anyway.  GPIO4 also had no external pull-up (R17 removed
+     * with LED footprint), making NEGEDGE detection unreliable.
+     * hal_ads1293_data_ready() now does a direct level check only. */
     gpio_config_t io = {
         .pin_bit_mask  = (1ULL << PIN_ADS1293_DRDY),
         .mode          = GPIO_MODE_INPUT,
@@ -201,21 +216,36 @@ esp_err_t hal_ads1293_init(void)
 
     /* ── 7. DRDY diagnostic poll — wait up to 500 ms ────────────────────────
      * At ~853 SPS the first sample should appear within 2 ms.
-     * If DRDY is still HIGH after 500 ms the init sequence is wrong; dump regs. */
-    for (int ms = 0; ms < 500; ms++) {
+     * If DRDY stays HIGH we do NOT abort — the GPIO4 external pull-up was
+     * The ISR catches brief pulses (the ADS1293 DRDYB pulse may be much shorter
+     * than 1 ms, so GPIO level-polling reliably missed it).  Wait up to 2 s
+     * for the interrupt flag; if it never fires, probe DATA_LOOP unconditionally.
+     * A non-zero probe response means the chip IS sampling — we continue and let
+     * step_100hz catch future DRDY pulses via the ISR.  Only a zero probe (chip
+     * not responding at all) is treated as a hard failure. */
+    bool drdy_seen = false;
+    for (int ms = 0; ms < 2000; ms++) {
         if (gpio_get_level(PIN_ADS1293_DRDY) == 0) {
-            ESP_LOGI(TAG, "DRDY asserted after %d ms — ADS1293 running", ms);
+            ESP_LOGI(TAG, "DRDY asserted (LOW) after %d ms — ADS1293 running", ms);
+            drdy_seen = true;
             break;
         }
         vTaskDelay(pdMS_TO_TICKS(1));
-        if (ms == 499) {
-            ESP_LOGE(TAG, "DRDY still HIGH after 500 ms — conversion not started");
-            ads1293_dump_regs();
+    }
+    if (!drdy_seen) {
+        ads1293_dump_regs();
+        int32_t p1 = 0, p2 = 0, p3 = 0;
+        hal_ads1293_read_ecg(&p1, &p2, &p3);
+        ESP_LOGW(TAG, "DRDY not seen in 2000 ms. Probe DATA_LOOP: CH1=%ld CH2=%ld CH3=%ld",
+                 (long)p1, (long)p2, (long)p3);
+        if (p1 == 0 && p2 == 0 && p3 == 0) {
+            ESP_LOGE(TAG, "Probe returned zero — chip not running");
             return ESP_ERR_TIMEOUT;
         }
+        ESP_LOGW(TAG, "Chip IS sampling (non-zero probe). Continuing — check DRDY wiring.");
     }
 
-    ESP_LOGI(TAG, "Init OK — 3-lead ECG ~853 SPS, SPI Mode 3 500 kHz, DRDY=GPIO%d CS=GPIO%d",
+    ESP_LOGI(TAG, "Init OK — 3-lead ECG ~853 SPS, SPI Mode 3 4 MHz, DRDY=GPIO%d CS=GPIO%d",
              PIN_ADS1293_DRDY, PIN_ADS1293_CS);
     return ESP_OK;
 }

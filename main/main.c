@@ -82,6 +82,7 @@
 #include "svc_files.h"
 #include "hal_bus.h"
 #include "svc_biosignal_acq.h"
+#include "hal_max30102.h"
 
 static const char *TAG = "WatchApp";
 
@@ -158,6 +159,8 @@ static uint32_t s_ecg_total_samples = 0;
 static int s_ecg_last_raw = 0;
 static int32_t s_ecg2_scaled = 2048;  /* ADS1293 CH2 (Lead II), scaled to 12-bit; feeds ECG chart series 2 */
 static int32_t s_ecg3_scaled = 2048;  /* ADS1293 CH3 (Lead III), scaled to 12-bit; feeds ECG chart series 3 */
+static int32_t s_ppg_ir_latest = 0;   /* MAX30102 IR (18-bit, 0–262143); 0 = not yet received */
+static uint8_t s_spo2_latest   = 0;   /* SpO2 % from MAX30102; 0 = accumulating */
 static int s_ecg_min = INT32_MAX;
 static int s_ecg_max = 0;
 static int s_ecg_hr_bpm = 0;
@@ -415,6 +418,15 @@ static int ecg_adc_read_raw(void)
 
     biosignal_frame_t frame;
     svc_biosignal_acq_get_latest(&frame);
+
+    /* Capture PPG and SpO2 whenever the MAX30102 has valid data, regardless of
+     * whether the ECG sensor is also valid. */
+    if (frame.valid_mask & BIOSIG_VALID_PPG_IR) {
+        s_ppg_ir_latest = frame.ppg_ir_raw;
+    }
+    if (frame.valid_mask & BIOSIG_VALID_SPO2) {
+        s_spo2_latest = (uint8_t)frame.spo2_est;
+    }
 
     if (frame.valid_mask & BIOSIG_VALID_ECG1) {
         /* Scale 24-bit signed ADS1293 values → 12-bit pipeline range (baseline 2048).
@@ -753,8 +765,14 @@ static void rec_update_topbar(void)
         snprintf(buf, sizeof(buf), bpm > 0 ? "HR %d" : "HR --", bpm);
         lv_label_set_text(s_lbl_rec_hr, buf);
     }
-    if (s_lbl_rec_spo2)
-        lv_label_set_text(s_lbl_rec_spo2, "SpO2 --%");
+    if (s_lbl_rec_spo2) {
+        uint8_t spo2 = s_spo2_latest;  /* uint8_t read is atomic on Xtensa */
+        if (spo2 > 0)
+            snprintf(buf, sizeof(buf), "SpO2 %u%%", (unsigned)spo2);
+        else
+            snprintf(buf, sizeof(buf), "SpO2 --%%");
+        lv_label_set_text(s_lbl_rec_spo2, buf);
+    }
     if (s_lbl_rec_pat) {
         int32_t pat;
         portENTER_CRITICAL(&s_ecg_spinlock);
@@ -1497,7 +1515,8 @@ static void ecg_sampler_task(void *arg)
                                           ECG_QRS_BP_HIGH_HZ,
                                           &s_ecg_hp_state,
                                           &s_ecg_lp_state,
-                                          &s_ecg_prev_input);
+                                          &s_ecg_prev_input)
+                     * ECG_QRS_GAIN;
 
         float diff = band - s_ecg_prev_band;
         s_ecg_prev_band = band;
@@ -1526,7 +1545,10 @@ static void ecg_sampler_task(void *arg)
         s_ecg_raw[index]  = (int32_t)raw;
         s_ecg_band[index] = band;   /* store bandpassed ECG for R-peak backward search */
 
-        int16_t ppg_raw = ppg_sim_get_sample(expected_ms);
+        /* PPG: use real MAX30102 IR channel if available, otherwise simulated. */
+        int32_t ppg_raw = (s_ppg_ir_latest > 0)
+                          ? s_ppg_ir_latest
+                          : (int32_t)ppg_sim_get_sample(expected_ms);
         float ppg_filt = signal_bandpass_step((float)ppg_raw,
                                               (float)ECG_SAMPLE_HZ,
                                               PPG_BP_LOW_HZ,
@@ -1678,13 +1700,15 @@ static void ecg_sampler_task(void *arg)
                 (esp_timer_get_time() - (int64_t)svc_rec_get_start_ms() * 1000LL) / 1000LL);
             row.time_ms   = elapsed;
             row.ecg       = (int32_t)raw;
+            row.ecg2      = fcg2_local;
+            row.ecg3      = ecg3_local;
             row.ppg       = ppg_sample;
             row.resp      = resp_sample;
             row.nas       = (int16_t)(REC_SIM_CENTRE + REC_SIM_AMP * sinf(phase + 0.5f));
             row.fcg1      = (int16_t)(REC_SIM_CENTRE + REC_SIM_AMP * sinf(phase * 2.0f));
             row.fcg2      = (int16_t)(REC_SIM_CENTRE + REC_SIM_AMP * sinf(phase * 2.0f + 0.3f));
             row.drift_ms  = s_ecg_sample_drift_ms;
-            row.spo2      = 0;
+            row.spo2      = s_spo2_latest;
             /* Staggered writes: spread hr and resp across 2 consecutive samples
              * after each beat to avoid clustering overhead in one sample period. */
             switch (s_rec_stagger) {
@@ -1940,6 +1964,10 @@ static void rec_fill_ppg_plot(void)
             if (y < 0)    y = 0;
             if (y > 1000) y = 1000;
         }
+        /* Invert for display: MAX30102 IR rises as blood volume rises, so the raw
+         * trace reads upside-down relative to the conventional PPG pulse shape.
+         * Flip about the chart mid-line so the systolic upstroke points up. */
+        y = 1000 - y;
         s_rec_chart_points[i] = (lv_coord_t)y;
     }
 }
@@ -2197,6 +2225,11 @@ static void rec_ui_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
     if (!s_screen_on) return;
+    /* F1: skip heavy chart refresh and SPI2 traffic when the Record screen is
+     * not the active screen.  Without this guard the timer kept running on
+     * Files / Settings / BP screens, doubling SPI2 load and contributing to
+     * the LVGL-task hang seen in the crash logs. */
+    if (lv_screen_active() != s_scr_record) return;
 
     int64_t t_cb = esp_timer_get_time();
     rec_update_topbar();
@@ -3090,11 +3123,9 @@ static void bp_analysis_task(void *arg)
 {
     (void)arg;
     static bp_analysis_t result;
-    if (bp_analyse_file(svc_bp_rec_get_filename(), &result) == ESP_OK
-            && result.valid) {
-        s_bp_last_result    = result;
-        s_bp_analysis_ready = true;
-    }
+    bp_analyse_file(svc_bp_rec_get_filename(), &result);
+    s_bp_last_result    = result;
+    s_bp_analysis_ready = true;   /* always signal — ui_timer_cb checks result.valid */
     vTaskDelete(NULL);
 }
 
@@ -3256,9 +3287,20 @@ static void bp_ui_timer_cb(lv_timer_t *timer)
         bp_trigger_analysis();
     }
 
-    /* Poll for analysis results */
+    /* Poll for analysis results (always fires — valid or not) */
     if (s_bp_analysis_ready) {
         s_bp_analysis_ready = false;
+
+        if (!s_bp_last_result.valid) {
+            uint32_t n = s_bp_last_result.beat_count;
+            char buf[64];
+            snprintf(buf, sizeof(buf), "No beats found (%lu detected)", (unsigned long)n);
+            if (s_lbl_bp_status)    lv_label_set_text(s_lbl_bp_status,    buf);
+            if (s_lbl_bp_hrv)       lv_label_set_text(s_lbl_bp_hrv,       "HRV RMSSD: --");
+            if (s_lbl_bp_pat_stat)  lv_label_set_text(s_lbl_bp_pat_stat,  "PAT: --  var: --");
+            return;
+        }
+
         uint32_t n = s_bp_last_result.beat_count;
 
         char buf[64];

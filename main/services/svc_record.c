@@ -72,7 +72,7 @@ static esp_err_t rec_open_file(void)
     setvbuf(s_rec_file, rec_iobuf, _IOFBF, sizeof(rec_iobuf));
 
     fprintf(s_rec_file,
-        "time_ms,ecg,ppg,resp,nas,fcg1,fcg2,drift_ms,batt_pct,spo2,resp_rate,hr_bpm,rr_ms,pat_ms,r_peak_ms\r\n");
+        "time_ms,ecg,ecg2,ecg3,ppg,resp,nas,fcg1,fcg2,drift_ms,batt_pct,spo2,resp_rate,hr_bpm,rr_ms,pat_ms,r_peak_ms\r\n");
     fflush(s_rec_file);
 
     return ESP_OK;
@@ -95,9 +95,10 @@ static void sd_writer_task(void *arg)
         if (xQueueReceive(s_rec_queue, &row, pdMS_TO_TICKS(200)) == pdTRUE) {
             if (s_rec_file) {
                 int n = snprintf(line, sizeof(line),
-                    "%lu,%ld,%ld,%d,%d,%d,%d,%ld,%u,%u,%u,%u,%d,%d,%lu\r\n",
+                    "%lu,%ld,%ld,%ld,%ld,%d,%d,%d,%d,%ld,%u,%u,%u,%u,%d,%d,%lu\r\n",
                     (unsigned long)row.time_ms,
-                    (long)row.ecg, (long)row.ppg, row.resp,
+                    (long)row.ecg, (long)row.ecg2, (long)row.ecg3,
+                    (long)row.ppg, row.resp,
                     row.nas, row.fcg1, row.fcg2,
                     (long)row.drift_ms, row.batt_pct,
                     row.spo2, row.resp_rate, row.hr_bpm,
@@ -126,9 +127,10 @@ static void sd_writer_task(void *arg)
     while (xQueueReceive(s_rec_queue, &row, 0) == pdTRUE) {
         if (s_rec_file) {
             snprintf(line, sizeof(line),
-                "%lu,%ld,%ld,%d,%d,%d,%d,%ld,%u,%u,%u,%u,%d,%d,%lu\r\n",
+                "%lu,%ld,%ld,%ld,%ld,%d,%d,%d,%d,%ld,%u,%u,%u,%u,%d,%d,%lu\r\n",
                 (unsigned long)row.time_ms,
-                (long)row.ecg, (long)row.ppg, row.resp,
+                (long)row.ecg, (long)row.ecg2, (long)row.ecg3,
+                (long)row.ppg, row.resp,
                 row.nas, row.fcg1, row.fcg2,
                 (long)row.drift_ms, row.batt_pct,
                 row.spo2, row.resp_rate, row.hr_bpm,

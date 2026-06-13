@@ -16,6 +16,7 @@ idf_component_register(
         "services/svc_files.c"
         "hal/hal_bus.c"
         "hal/hal_ads1293.c"
+        "hal/hal_max30102.c"
         "services/svc_biosignal_acq.c"
     INCLUDE_DIRS
         "."

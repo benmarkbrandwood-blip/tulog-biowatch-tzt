@@ -115,3 +115,24 @@
 
 /* Byte count for a CH1+CH2 ECG loop read (cmd byte excluded) */
 #define ADS1293_LOOP_E1E2_BYTES 6
+
+/* R2_RATE / R3_RATE encoding — bits [1:0] only
+ * ODR = 102400 / (R1 × R2 × R3), R1 = 4 (fixed for ECG mode)
+ *
+ * R2_RATE [1:0]:   00=R2×2  01=R2×4  10=R2×5  11=R2×8
+ * R3_RATE [1:0]:   00=R3×2  01=R3×4  10=R3×6  11=R3×8
+ *
+ * Useful operating points:
+ *   ECG record (~853 SPS): R2=5 (0x02), R3=6 (0x02) → 102400/120 = 853 SPS
+ *   BP / PTT  (~1067 SPS): R2=4 (0x01), R3=6 (0x02) → 102400/96  = 1067 SPS
+ *   High res  (~1280 SPS): R2=5 (0x02), R3=4 (0x01) → 102400/80  = 1280 SPS
+ */
+#define ADS1293_R2_VAL_2   0x00   /* R2 = 2 */
+#define ADS1293_R2_VAL_4   0x01   /* R2 = 4 */
+#define ADS1293_R2_VAL_5   0x02   /* R2 = 5 (default) */
+#define ADS1293_R2_VAL_8   0x03   /* R2 = 8 */
+
+#define ADS1293_R3_VAL_2   0x00   /* R3 = 2 */
+#define ADS1293_R3_VAL_4   0x01   /* R3 = 4 */
+#define ADS1293_R3_VAL_6   0x02   /* R3 = 6 (default) */
+#define ADS1293_R3_VAL_8   0x03   /* R3 = 8 */

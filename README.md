@@ -136,6 +136,10 @@ main/
 **ECG sampler task** (`ecg_sampler_task` in main.c, Core 0, priority 8)
 Runs at 100 Hz. Calls `ecg_simulate_raw()` for a synthetic P-QRS-T waveform, passes samples through a first-order bandpass filter (10–15 Hz), applies a Pan-Tompkins-style detector (derivative → square → moving window integration → adaptive threshold), and after a 200 ms deferred wait performs a bidirectional search on the bandpassed ring buffer to locate the true R-peak apex. Generates a beat-synchronised two-Gaussian PPG waveform, applies a 0.5–16 Hz PPG bandpass filter, runs a first-derivative foot detector to compute PAT, estimates heart rate from refined RR intervals, estimates respiration rate from signal intersection counting, and enqueues complete `rec_row_t` rows to the SD writer when recording is active.
 
+> **ECG QRS gain tuning (`ECG_QRS_GAIN` in `app_config.h`):**
+> The ADS1293 24-bit values are right-shifted by 12 before entering the Pan-Tompkins pipeline, leaving only ±2–5 counts of AC variation at the 12-bit pipeline scale. `ECG_QRS_GAIN = 100.0f` multiplies the bandpass output before differentiation so the squared MWI clears the initial 120-count detection threshold. If you see false R-peaks (noise triggering HR readings), lower the gain toward 20–50. If HR still reads `--` with electrodes attached, raise it toward 200. A serial log showing the `WatchApp: plot#N` line or `ECG raw: CH1=` values will quickly show whether the signal amplitude is changing with electrode contact.
+> See [docs/SIGNAL_PROCESSING.md](docs/SIGNAL_PROCESSING.md) for the full pipeline description.
+
 **Signal pipeline** (`sig_pipeline.c`, `sig_ppg.c`)
 - `ecg_simulate_raw()`: deterministic P-QRS-T model at ~75 BPM with slow respiratory baseline wander and LFSR noise. Produces 12-bit samples compatible with the autoscale and QRS detector.
 - `signal_bandpass_step()`: single-sample first-order HP + LP in series; externally-held state makes it re-entrant. Reused for both ECG (10–15 Hz) and PPG (0.5–16 Hz) filtering.

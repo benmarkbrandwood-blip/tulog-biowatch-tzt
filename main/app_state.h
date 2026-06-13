@@ -8,7 +8,9 @@
 
 typedef struct {
     uint32_t time_ms;
-    int32_t  ecg;              /* int32_t: holds 24-bit ADS127L18 samples without truncation */
+    int32_t  ecg;              /* Lead I  (ADS1293 CH1) */
+    int32_t  ecg2;             /* Lead II (ADS1293 CH2) */
+    int32_t  ecg3;             /* Lead III (ADS1293 CH3) */
     int32_t  ppg;              /* int32_t: holds 19-bit MAX86140 samples without truncation */
     int16_t  resp, nas, fcg1, fcg2;
     int32_t  drift_ms;
