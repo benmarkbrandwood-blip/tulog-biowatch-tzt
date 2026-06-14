@@ -13,7 +13,7 @@ typedef struct {
     int32_t  ecg3;             /* Lead III (ADS1293 CH3) */
     int32_t  ppg;              /* int32_t: holds 19-bit MAX86140 samples without truncation */
     int16_t  resp, nas, fcg1;
-    int16_t  accel_x, accel_y, accel_z;  /* MPU-6050 raw; divide by 16384 × 9.81 for m/s² */
+    float    accel_x, accel_y, accel_z;  /* MPU-6050, m/s² (±2g = ±19.62 m/s²) */
     int32_t  drift_ms;
     uint8_t  batt_pct;  /* E-Gauge percent, written every ~30 s, 0 between updates */
     uint8_t  spo2;

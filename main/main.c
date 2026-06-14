@@ -1751,9 +1751,9 @@ static void ecg_sampler_task(void *arg)
             row.resp      = resp_sample;
             row.nas       = (int16_t)(REC_SIM_CENTRE + REC_SIM_AMP * sinf(phase + 0.5f));
             row.fcg1      = (int16_t)(REC_SIM_CENTRE + REC_SIM_AMP * sinf(phase * 2.0f));
-            row.accel_x   = (int16_t)accel_x_loc;
-            row.accel_y   = (int16_t)accel_y_loc;
-            row.accel_z   = (int16_t)accel_z_loc;
+            row.accel_x   = accel_x_loc / 16384.0f * 9.81f;
+            row.accel_y   = accel_y_loc / 16384.0f * 9.81f;
+            row.accel_z   = accel_z_loc / 16384.0f * 9.81f;
             row.drift_ms  = s_ecg_sample_drift_ms;
             row.spo2      = s_spo2_latest;
             /* Staggered writes: spread hr and resp across 2 consecutive samples
