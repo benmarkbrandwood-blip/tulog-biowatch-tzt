@@ -1,6 +1,7 @@
 #include "svc_biosignal_acq.h"
 #include "hal_ads1293.h"
 #include "hal_max30102.h"
+#include "hal_mpu6050.h"
 #include "app_config.h"
 
 #include "esp_timer.h"
@@ -15,6 +16,7 @@ static biosignal_frame_t s_latest;
 static SemaphoreHandle_t s_lock;
 static bool              s_ads1293_ok  = false;
 static bool              s_max30102_ok = false;
+static bool              s_mpu6050_ok  = false;
 
 esp_err_t svc_biosignal_acq_init(void)
 {
@@ -40,6 +42,15 @@ esp_err_t svc_biosignal_acq_init(void)
                  esp_err_to_name(err));
     }
 
+    err = hal_mpu6050_init();
+    if (err == ESP_OK) {
+        s_mpu6050_ok = true;
+        ESP_LOGI(TAG, "MPU-6050 online — accelerometer valid");
+    } else {
+        ESP_LOGW(TAG, "MPU-6050 init failed (%s) — accel channel inactive",
+                 esp_err_to_name(err));
+    }
+
     return ESP_OK;  /* non-fatal: system continues with simulated signals */
 }
 
@@ -50,6 +61,7 @@ void svc_biosignal_acq_step_100hz(void)
 
     int32_t ch1 = 0, ch2 = 0, ch3 = 0;
     int32_t ppg_ir = 0, ppg_red = 0;
+    int16_t ax = 0, ay = 0, az = 0;
     uint32_t new_valid = 0;
 
     if (s_ads1293_ok) {
@@ -72,6 +84,12 @@ void svc_biosignal_acq_step_100hz(void)
         }
     }
 
+    if (s_mpu6050_ok) {
+        if (hal_mpu6050_read_accel(&ax, &ay, &az) == ESP_OK) {
+            new_valid |= BIOSIG_VALID_ACCEL_X | BIOSIG_VALID_ACCEL_Y | BIOSIG_VALID_ACCEL_Z;
+        }
+    }
+
     if (xSemaphoreTake(s_lock, 0) == pdTRUE) {
         s_latest.sample_index = idx;
         s_latest.timestamp_us = ts;
@@ -84,6 +102,11 @@ void svc_biosignal_acq_step_100hz(void)
             s_latest.ppg_ir_raw  = ppg_ir;
             s_latest.ppg_red_raw = ppg_red;
             s_latest.spo2_est    = (int32_t)hal_max30102_get_spo2();
+        }
+        if (new_valid & BIOSIG_VALID_ACCEL_X) {
+            s_latest.accel_x_raw = (int32_t)ax;
+            s_latest.accel_y_raw = (int32_t)ay;
+            s_latest.accel_z_raw = (int32_t)az;
         }
         s_latest.valid_mask |= new_valid;
         xSemaphoreGive(s_lock);
