@@ -67,14 +67,9 @@ void svc_biosignal_acq_step_100hz(void)
     if (s_ads1293_ok) {
         /* DRDY ISR removed (F0): reads unconditionally at 100 Hz.
          * ADS1293 at ~853 SPS always has fresh data. */
-        static uint32_t s_ecg_log_ctr = 0;
         esp_err_t ecg_err = hal_ads1293_read_ecg(&ch1, &ch2, &ch3);
         if (ecg_err == ESP_OK) {
             new_valid |= BIOSIG_VALID_ECG1 | BIOSIG_VALID_ECG2 | BIOSIG_VALID_ECG3;
-            if (++s_ecg_log_ctr % 100 == 0) {
-                ESP_LOGI(TAG, "ECG raw: CH1=%ld CH2=%ld CH3=%ld",
-                         (long)ch1, (long)ch2, (long)ch3);
-            }
         }
     }
 
@@ -85,8 +80,23 @@ void svc_biosignal_acq_step_100hz(void)
     }
 
     if (s_mpu6050_ok) {
-        if (hal_mpu6050_read_accel(&ax, &ay, &az) == ESP_OK) {
+        static uint32_t s_accel_err_ctr = 0;
+        esp_err_t accel_err = hal_mpu6050_read_accel(&ax, &ay, &az);
+        if (accel_err == ESP_OK) {
             new_valid |= BIOSIG_VALID_ACCEL_X | BIOSIG_VALID_ACCEL_Y | BIOSIG_VALID_ACCEL_Z;
+            s_accel_err_ctr = 0;
+        } else {
+            s_accel_err_ctr++;
+            if (s_accel_err_ctr == 1 || s_accel_err_ctr % 500 == 0) {
+                ESP_LOGW(TAG, "MPU-6050 read failed #%lu: %s",
+                         (unsigned long)s_accel_err_ctr, esp_err_to_name(accel_err));
+            }
+        }
+    } else {
+        static bool s_offline_logged = false;
+        if (!s_offline_logged) {
+            ESP_LOGW(TAG, "MPU-6050 offline — accel data not available (init failed)");
+            s_offline_logged = true;
         }
     }
 
