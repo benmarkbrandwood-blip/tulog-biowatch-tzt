@@ -14,8 +14,9 @@ static const char *TAG = "hal_mpu6050";
 #define MPU6050_REG_ACCEL_XOUT_H 0x3B
 #define MPU6050_REG_WHO_AM_I     0x75
 
-/* WHO_AM_I expected response for MPU-6050 (AD0=low → 0x68) */
+/* WHO_AM_I values — MPU-6050 returns 0x68; MPU-6500 / MPU-9250 return 0x70 */
 #define MPU6050_WHO_AM_I_VAL     0x68
+#define MPU6500_WHO_AM_I_VAL     0x70
 
 static bool s_init_ok = false;
 
@@ -33,12 +34,18 @@ esp_err_t hal_mpu6050_init(void)
                  esp_err_to_name(err));
         return err;
     }
-    ESP_LOGI(TAG, "WHO_AM_I = 0x%02X (expected 0x%02X) %s",
-             who_am_i, MPU6050_WHO_AM_I_VAL,
-             (who_am_i == MPU6050_WHO_AM_I_VAL) ? "OK" : "MISMATCH");
-    if (who_am_i != MPU6050_WHO_AM_I_VAL) {
+
+    const char *chip_name;
+    if (who_am_i == MPU6050_WHO_AM_I_VAL) {
+        chip_name = "MPU-6050";
+    } else if (who_am_i == MPU6500_WHO_AM_I_VAL) {
+        chip_name = "MPU-6500/MPU-9250";
+    } else {
+        ESP_LOGE(TAG, "WHO_AM_I = 0x%02X — unrecognised chip (expected 0x68 or 0x70)",
+                 who_am_i);
         return ESP_ERR_NOT_FOUND;
     }
+    ESP_LOGI(TAG, "WHO_AM_I = 0x%02X — %s identified", who_am_i, chip_name);
 
     /* Wake from sleep: clear SLEEP bit in PWR_MGMT_1 */
     uint8_t pwr = 0x00;
@@ -74,7 +81,7 @@ esp_err_t hal_mpu6050_init(void)
              accel_cfg_rb, (accel_cfg_rb >> 3) & 0x03);
 
     s_init_ok = true;
-    ESP_LOGI(TAG, "MPU-6050 ready — accel ±2g (16384 LSB/g), gyro standby");
+    ESP_LOGI(TAG, "%s ready — accel ±2g (16384 LSB/g), gyro standby", chip_name);
     return ESP_OK;
 }
 

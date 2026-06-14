@@ -2094,9 +2094,11 @@ static void rec_update_plot(void)
         rec_fill_ecg_points(ay_copy, ay_min, ay_max, write_index_ac, total_ac, s_rec_chart_points2);
         rec_fill_ecg_points(az_copy, az_min, az_max, write_index_ac, total_ac, s_rec_chart_points3);
 
-        lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series,      s_rec_chart_points);
-        lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series_ecg2, s_rec_chart_points2);
-        lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series_ecg3, s_rec_chart_points3);
+        lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series, s_rec_chart_points);
+        if (s_rec_series_ecg2)
+            lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series_ecg2, s_rec_chart_points2);
+        if (s_rec_series_ecg3)
+            lv_chart_set_series_ext_y_array(s_rec_plot, s_rec_series_ecg3, s_rec_chart_points3);
         lv_chart_refresh(s_rec_plot);
         return;
     }

@@ -26,6 +26,7 @@ This single-clock model is critical for PAT accuracy: both the ECG R-peak timest
 | ECG (3-lead) | 100 Hz read rate; ADS1293 @ ~853 SPS hardware (§2.7) | 1000 Hz via ADS1293 at higher ODR |
 | PPG (IR + Red) | 100 Hz read rate; MAX30102 @ 100 SPS hardware (§3.6) | 100–400 Hz via MAX30102 or MAX86140 |
 | SpO₂ | ~4 s update period; MAX30102 Welford accumulator (§5.4) | Continuous, same sensor |
+| Accel (X/Y/Z) | 100 Hz read rate; MPU-6050/6500 @ 100 Hz (§5.5) | Same sensor; INT-gated reads for power saving |
 | RESP / NAS / ERB | 100 Hz (sine placeholders) | 50–100 Hz via ADS1293 ch4/5 |
 | FCG | 100 Hz (sine placeholder) | 1000 Hz via ADS1293 |
 
@@ -534,6 +535,46 @@ Integration changes required:
 
 5. `ppg_sim_get_pat_ms()` (simulation ground truth) can be retired; the validation log comparing it to the detector can be removed or repurposed for MAX86140 SNR monitoring.
 
+### 5.5 MPU-6050/6500 accelerometer acquisition (hardware — implemented)
+
+The MPU-6050/6500 is a 3-axis MEMS accelerometer connected via I²C0 (SDA=GPIO21,
+SCL=GPIO22) at address 0x68, 400 kHz. The driver is in
+[main/hal/hal_mpu6050.c](../main/hal/hal_mpu6050.c); acquisition is orchestrated by
+[main/services/svc_biosignal_acq.c](../main/services/svc_biosignal_acq.c).
+
+**Configuration:**
+
+| Setting | Register | Value | Effect |
+| - | - | - | - |
+| Wake from sleep | PWR_MGMT_1 (0x6B) | 0x00 | Clears SLEEP bit; sensor was in default sleep state |
+| Gyro standby | PWR_MGMT_2 (0x6C) | 0x07 | STBY_XG/YG/ZG = 1; gyroscope disabled, accel active |
+| Full-scale range | ACCEL_CONFIG (0x1C) | 0x00 | AFS_SEL = 0 → ±2 g, 16384 LSB/g |
+
+**Data read:**
+
+`hal_mpu6050_read_accel()` burst-reads 6 bytes from `ACCEL_XOUT_H` (0x3B):
+X[H,L], Y[H,L], Z[H,L]. Each axis is a 16-bit two's-complement integer; at ±2 g the
+sensitivity is 16384 LSB/g.
+
+**Acquisition path:**
+
+`svc_biosignal_acq_step_100hz()` calls `hal_mpu6050_read_accel()` unconditionally
+at 100 Hz and publishes `accel_x_raw / accel_y_raw / accel_z_raw` (int32_t) to
+`biosignal_frame_t` under a mutex. `ecg_sampler_task` reads the frame, stores the
+raw int16_t values in the 4-second ring buffers, and converts to m/s² at the CSV
+write site:
+
+```c
+row.accel_x = accel_x_loc / 16384.0f × 9.81f;
+```
+
+The INT pin (GPIO25) is not used; reads are unconditional.
+
+**WHO_AM_I note:** MPU-6050 returns 0x68; MPU-6500 and MPU-9250 return 0x70.
+Both are accepted by `hal_mpu6050_init()` — the register map and scale factors are
+identical between variants. See [docs/mpu-6050-6500.md](mpu-6050-6500.md) for full
+driver reference.
+
 ### 5.3 FCG — ADS127L18 ch0/ch1
 
 FCG channels are stored as `int16_t` in `rec_row_t` (±32,767). ADS127L18 24-bit values should be scaled to 16-bit at the driver layer (right-shift by 8). If full 24-bit FCG resolution is required for PEP extraction, `fcg1`/`fcg2` fields should be widened to `int32_t` following the same pattern as `ecg` and `ppg`.
@@ -586,7 +627,9 @@ Updated approximately every 4 s (once per 400-sample window). The result is publ
 | `resp` | int16 | ADC counts | Respiratory signal (simulated sine; ERB/NAS in Stage 2) |
 | `nas` | int16 | ADC counts | Nasal thermistor (simulated; ADS127L18 ch3 in Stage 2) |
 | `fcg1` | int16 | ADC counts | FCG channel 1 (simulated; ADS127L18 ch0 in Stage 2) |
-| `fcg2` | int16 | ADC counts | FCG channel 2 (simulated; ADS127L18 ch1 in Stage 2) |
+| `accel_x_ms2` | float | m/s² | MPU-6050/6500 X axis; 0.0 if sensor absent |
+| `accel_y_ms2` | float | m/s² | MPU-6050/6500 Y axis; 0.0 if sensor absent |
+| `accel_z_ms2` | float | m/s² | MPU-6050/6500 Z axis; 0.0 if sensor absent |
 | `drift_ms` | int32 | ms | `actual_ms − expected_ms` cumulative wall-clock jitter |
 | `batt_pct` | uint8 | % | Battery percent — always 255 (IP5306 has no I²C/ADC path to ESP32) |
 | `spo2` | uint8 | % | SpO₂ — MAX30102 Welford estimate (0–100 %); 0 if no finger or < 400-sample window elapsed |
